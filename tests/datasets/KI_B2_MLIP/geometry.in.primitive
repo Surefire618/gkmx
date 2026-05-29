@@ -1,0 +1,16 @@
+#=======================================================
+# FHI-aims file: /scratch/usr/bepshuoz/data/240905_MLGK_16_materials/KI_bcc/lattice_expansion/lattice_expansion_300/relaxation_04/relaxation/geometry.in.next_step
+# Created using the Atomic Simulation Environment (ASE)
+# Mon Feb 10 11:08:36 2025
+
+# Additional information:
+#  Relaxed with BFGS, fmax=0.100 meV/AA
+#  nsteps = 4
+#  residual force  = 0.000000 meV/AA
+#  residual stress = 0.000516 meV/AA
+#=======================================================
+lattice_vector 4.2617970087139998 0.0000000000000000 0.0000000000000000 
+lattice_vector 0.0000000000000000 4.2617970087139998 -0.0000000000000000 
+lattice_vector -0.0000000000000000 -0.0000000000000000 4.2617970087139998 
+atom_frac 0.0000000000000000 0.0000000000000000 0.0000000000000000 K
+atom_frac 0.5000000000000000 0.5000000000000000 0.5000000000000000 I

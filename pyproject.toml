@@ -1,0 +1,53 @@
+[project]
+name = "gkmx"
+description = "Quasi-harmonic Green-Kubo mode decomposition and size extrapolation."
+authors = [{name = "Shuo Zhao", email = "zhaosure168@gmail.com"}]
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.10"
+dynamic = ["version"]
+dependencies = [
+    "numpy>=1.22",
+    "scipy>=1.9",
+    "xarray>=2022.6",
+    "ase>=3.20",
+    "spglib>=1.12",
+    "h5py",
+    "h5netcdf",
+]
+
+[project.scripts]
+gkmx = "gkmx.cli:gkmx"
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+jax = ["jax"]
+jax-cuda = ["jax[cuda12]"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+extend-select = ["W"]
+ignore = [
+    "E741",  # `I`, `l`, `N` are load-bearing physics notation (supercell vs primitive index, etc.)
+    "E702",  # packed `w_s = ...; w_sp = ...` assignments are idiomatic in the phonon kernels
+]
+
+[tool.ruff.lint.per-file-ignores]
+# pytest.importorskip() + local imports is idiomatic pytest.
+"tests/**/*.py" = ["E402"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = {attr = "gkmx.__version__"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "tests/integration"]
+markers = [
+    "integration: end-to-end tests that drive `get_kappa` on the in-repo `tests/datasets/KI_B2_MLIP/` fixture. Run with ``pytest tests/integration/`` or ``pytest -m integration``.",
+]
