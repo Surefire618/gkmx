@@ -23,11 +23,12 @@ from ._backend import get_backend
 from ._log import Timer, talk, warn
 from .brillouin import get_symmetrized_array
 from .dynamical_matrix import DynamicalMatrix
-from .kappa import get_kappa_BTE
+from .kappa import get_kappa_BTE, qhgk_tau_eff
 from .interpolation import get_interpolation_data
 from .io import parse_force_constants
 from .mic import fold as mic_fold
 from .mic import is_orthogonal
+from ._resources import mode_block_peak_gb
 from .precision import Precision
 from .trajectory import gk_prefactor
 
@@ -300,15 +301,21 @@ def compute_cv_tau(dataset, dmx, stride=1, t_chunk=5000, mode_block=None,
     tau_max_eff = Nt
     nfft = bk.next_fast_len(2 * Nt)
 
-    # Size mode_block against the legacy peak: 3 × (B, Nt) complex (counts
-    # `a_re`, `a_im`, transient `a_blk` coexisting). If single-mode peak
-    # still over budget, refuse to silently OOM — bigger device or shrink
-    # `Nt`/`stride`, never truncate the ACF support.
+    # Choose how many modes to autocorrelate at once. The ACF keeps three
+    # (mode_block, Nt) complex buffers alive simultaneously, so memory grows
+    # linearly with the block and the largest affordable block is just the
+    # budget divided by the cost of one mode.
+    #
+    # peak_factor=1.0 asks for the raw allocation with no headroom of its own,
+    # because max_mem_gb already carries the margin: it is the user's number
+    # verbatim when given as a float, and an already-reduced value when it came
+    # from "auto".
     if mode_block is None:
-        peak_bytes = Nt * bytes_per_complex * 3
-        mode_block = max(1, int(max_mem_gb * 1e9 / peak_bytes))
-        mode_block = min(mode_block, nmodes)
-        single_mode_gb = peak_bytes / 1e9
+        single_mode_gb = mode_block_peak_gb(1, Nt, bytes_per_complex, peak_factor=1.0)
+        # One mode is the floor. If even that exceeds the budget there is no
+        # smaller block to retreat to, so stop here instead of dying later in
+        # the FFT. The only other lever would be shortening the ACF, and that
+        # changes the physics rather than the memory use — hence the refusal.
         if single_mode_gb > max_mem_gb:
             raise MemoryError(
                 f"compute_cv_tau: even mode_block=1 needs "
@@ -318,8 +325,9 @@ def compute_cv_tau(dataset, dmx, stride=1, t_chunk=5000, mode_block=None,
                 f"larger-memory device, or shrink Nt/stride. Time-axis "
                 f"chunking of the ACF is not an option — it biases the "
                 f"estimator at every lag (Bartlett triangle).")
+        mode_block = min(nmodes, max(1, int(max_mem_gb / single_mode_gb)))
 
-    real_peak_gb = mode_block * Nt * bytes_per_complex * 3 / 1e9
+    real_peak_gb = mode_block_peak_gb(mode_block, Nt, bytes_per_complex, peak_factor=1.0)
     _talk(f"backend={backend} [{bk.device_description()}], "
           f"dtype={np.dtype(dtype_u).name}/{np.dtype(dtype_a).name}, "
           f"mode_block={mode_block}, t_chunk={t_chunk}, "
@@ -1017,21 +1025,11 @@ def _get_gk_interpolate(dataset, dmx=None, interpolate=False,
                                     name=keys.v_qssa_cartesian))
 
         # Per-pair QHGK kappa (.real exact: imag sums to zero by v·v.conj() Hermiticity).
-        w_scale = 0.1
-        tol = 1e-4
-        w = np.asarray(dmx.w_qs, dtype=real_dt).copy() * w_scale
-        wi = np.asarray(dmx.w_inv_qs, dtype=real_dt).copy() / w_scale
-        w = np.where(w < tol, 0, w)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            gamma = 0.5 / tau_arr
-            w_s = w[:, :, None]; w_sp = w[:, None, :]
-            wi_s = wi[:, :, None]; wi_sp = wi[:, None, :]
-            w_plus = (w_s + w_sp) ** 2 * (wi_s * wi_sp) / 4
-            w_minus = (w_s - w_sp) ** 2 * (wi_s * wi_sp) / 4
-            gamma_ss = gamma[:, :, None] + gamma[:, None, :]
-            gamma_plus = gamma_ss / (gamma_ss ** 2 + (w_s + w_sp) ** 2)
-            gamma_minus = gamma_ss / (gamma_ss ** 2 + (w_s - w_sp) ** 2)
-        tau_eff = np.nan_to_num(w_plus * gamma_minus + w_minus * gamma_plus)
+        tau_eff = qhgk_tau_eff(
+            np.asarray(dmx.w_qs, dtype=real_dt),
+            np.asarray(dmx.w_inv_qs, dtype=real_dt),
+            tau_arr,
+        )
         cv_bcast = cv_arr[:, None, :] if cv_arr.ndim == 2 else cv_arr
         v2_qssab = (v_qssa_arr[..., :, None]
                     * v_qssa_arr[..., None, :].conj())

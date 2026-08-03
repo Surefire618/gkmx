@@ -29,27 +29,23 @@ def get_kappa_BTE(v_qsa, tau_qs, cv_qs=None, weights=None, scalar=False):
     return result
 
 
-def get_kappa_QHGK(v_qssa, tau_qs, w_qs, w_inv_qs, cv_qs=None, weights=None,
-                    w_scale=0.1, scalar=False, tol=1e-4):
-    """QHGK thermal conductivity (Simoncelli, Marzari, Mauri, Nat. Commun. 10, 3853 (2019), Eq. S10)."""
-    if weights is None:
-        weights = 1.0
-    if cv_qs is None:
-        cv_qs = 1.0
+def qhgk_tau_eff(w_qs, w_inv_qs, tau_qs, w_scale=0.1, tol=1e-4):
+    """Off-diagonal QHGK effective lifetime ``tau_eff[q, s, s']``, shape ``(Nq, Ns, Ns)``.
 
-    # Pair denominators (w_s +/- w_sp)^2 are catastrophically cancelling
-    # on near-degenerate modes; run at fp64 if that bites.
+    Quasi-harmonic Green-Kubo coherence kernel of Isaeva, Barbalinardo, Donadio and
+    Baroni, Nat. Commun. 10, 3853 (2019), retaining the antiresonant ``(w_s + w_sp)``
+    term.
+    """
     w = np.asarray(w_qs).copy() * w_scale
     wi = np.asarray(w_inv_qs).copy() / w_scale
-    cv_qs = np.asarray(cv_qs)
-    tau_qs = np.nan_to_num(tau_qs)
+    tau = np.nan_to_num(np.asarray(tau_qs))
     w = np.where(w < tol, 0, w)
 
     # gamma = 1/(2 tau). Masked acoustic modes have tau=0 → gamma=inf;
     # the Lorentzians correctly limit to 0 (inf/(inf^2 + finite) → 0).
     # Suppress the raw divide warnings; nan_to_num on tau_eff sanitizes.
     with np.errstate(divide="ignore", invalid="ignore"):
-        gamma = 0.5 / tau_qs
+        gamma = 0.5 / tau
         w_s = w[:, :, None]; w_sp = w[:, None, :]
         wi_s = wi[:, :, None]; wi_sp = wi[:, None, :]
         w_plus = (w_s + w_sp) ** 2 * (wi_s * wi_sp) / 4
@@ -57,7 +53,20 @@ def get_kappa_QHGK(v_qssa, tau_qs, w_qs, w_inv_qs, cv_qs=None, weights=None,
         gamma_ss = gamma[:, :, None] + gamma[:, None, :]
         gamma_plus = gamma_ss / (gamma_ss ** 2 + (w_s + w_sp) ** 2)
         gamma_minus = gamma_ss / (gamma_ss ** 2 + (w_s - w_sp) ** 2)
-    tau_eff = np.nan_to_num(w_plus * gamma_minus + w_minus * gamma_plus)
+    return np.nan_to_num(w_plus * gamma_minus + w_minus * gamma_plus)
+
+
+def get_kappa_QHGK(v_qssa, tau_qs, w_qs, w_inv_qs, cv_qs=None, weights=None,
+                    w_scale=0.1, scalar=False, tol=1e-4):
+    """QHGK thermal conductivity
+    """
+    if weights is None:
+        weights = 1.0
+    if cv_qs is None:
+        cv_qs = 1.0
+
+    cv_qs = np.asarray(cv_qs)
+    tau_eff = qhgk_tau_eff(w_qs, w_inv_qs, tau_qs, w_scale=w_scale, tol=tol)
 
     v2 = v_qssa[..., :, None] * v_qssa[..., None, :].conj()
 
