@@ -44,13 +44,16 @@ result = get_kappa(
     nq_max=8,
 )
 
-print(result.kappa_bte)      # (3, 3) tensor, W/(m·K) — particle channel
-print(result.kappa_qhgk)     # (3, 3) tensor, W/(m·K) — particle + wave channels
+# All κ tensors are (3, 3), W/(m·K).
+print(result.thermal_conductivity_harmonic)       # BTE — particle channel
+print(result.thermal_conductivity_harmonic_QHGK)  # QHGK — particle + wave channels
+print(result.thermal_conductivity_corrected)      # size-extrapolated to N → ∞
 ```
 
-The returned `xarray.Dataset` also carries the heat-flux autocorrelation, the
-finite-time-corrected κ integral, and per-mode frequencies, group velocities,
-lifetimes, and heat capacities. Save it with `result.to_netcdf(...)`.
+The returned `xarray.Dataset` also carries the direct Green-Kubo κ
+(`thermal_conductivity`), the heat-flux autocorrelation, the finite-time-corrected
+κ integral, and per-mode frequencies, group velocities, lifetimes, and heat
+capacities. Save it with `result.to_netcdf(...)`.
 
 ## Command-line interface
 
