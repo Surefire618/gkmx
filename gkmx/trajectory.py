@@ -72,10 +72,11 @@ def _guess_heat_flux_time_unit(ds):
     pf = V / units.kB / T**2 * C.to_W_mK
     kappa_rough = pf * j_std**2 * tau_typ_fs
 
+    # A ps-base trajectory sits ~1e6× above the physical window (>1e5);
+    # everything else defaults to fs. The ambiguous gap (1e4, 1e5] falls
+    # through to fs here and is flagged by the caller's warning.
     if kappa_rough > 1e5:
         return "ps", kappa_rough
-    if _KAPPA_PHYSICAL_LO <= kappa_rough <= _KAPPA_PHYSICAL_HI:
-        return "fs", kappa_rough
     return "fs", kappa_rough
 
 
