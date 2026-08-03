@@ -7,6 +7,22 @@ import warnings
 from dataclasses import dataclass
 from typing import ClassVar, Optional
 
+_BYTES_PER_GB = 1e9
+_KIB = 1024
+_MIB = 1024 * 1024
+
+def mode_block_peak_gb(B: int, Nt: int, bytes_per_complex: int,
+                       peak_factor: float) -> float:
+    """Per-mode-block ACF peak: 3 simultaneous ``(B, Nt)`` complex arrays × ``peak_factor``.
+
+    The runtime bottleneck of ``compute_cv_tau`` (``a_re``, ``a_im``, and a
+    transient ``a_blk`` coexist). Single source for the peak formula, shared by
+    ``MemoryCost.block_peak_gb`` and ``compute_cv_tau``'s ``mode_block`` sizer.
+    ``peak_factor`` absorbs FFT scratch + on-device projection intermediates;
+    the kernel sizer passes ``1.0`` and sizes against the raw allocation.
+    """
+    return peak_factor * 3 * B * Nt * bytes_per_complex / _BYTES_PER_GB
+
 
 @dataclass(frozen=True, slots=True)
 class MemoryCost:
@@ -61,7 +77,7 @@ class MemoryCost:
         reads positions + velocities only; forces are consumed by
         ``_harmonic_force_residuals`` on a separate code path.
         """
-        return 2 * self.Nt * self.Nat * 3 * self.bytes_per_real / 1e9
+        return 2 * self.Nt * self.Nat * 3 * self.bytes_per_real / _BYTES_PER_GB
 
     @property
     def dmx_eqsI_gb(self) -> float:
@@ -71,7 +87,7 @@ class MemoryCost:
         Coexists with ``kernel_persistent_gb`` for the entire call
         (line 285 keeps a ``dmx.e_qsI`` reference alive).
         """
-        return self.nmodes * self.I * self.bytes_per_complex / 1e9
+        return self.nmodes * self.I * self.bytes_per_complex / _BYTES_PER_GB
 
     @property
     def kernel_persistent_gb(self) -> float:
@@ -81,7 +97,7 @@ class MemoryCost:
         projection is two real matmuls instead of one complex. Both
         persist for the entire call.
         """
-        return 2 * self.nmodes * self.I * self.bytes_per_real / 1e9
+        return 2 * self.nmodes * self.I * self.bytes_per_real / _BYTES_PER_GB
 
     # --- knob-dependent terms ------------------------------------------
 
@@ -95,17 +111,14 @@ class MemoryCost:
         """
         # U + V: 2 × (t_chunk, Nat, 3) = 2·3·t_chunk·Nat reals
         # up_np: (I, 2·t_chunk) = 6·t_chunk·Nat reals
-        return (2 * 3 + 6) * t_chunk * self.Nat * self.bytes_per_real / 1e9
+        return (2 * 3 + 6) * t_chunk * self.Nat * self.bytes_per_real / _BYTES_PER_GB
 
     def block_peak_gb(self, B: int, peak_factor: float) -> float:
-        """Per-mode-block ACF peak — the runtime bottleneck.
-
-        Three simultaneous ``(B, Nt)`` complex arrays (``a_re``,
-        ``a_im``, transient ``a_blk``) times the empirical
-        ``peak_factor`` (absorbs FFT scratch, on-device projection
-        intermediates, and the other persistent terms).
+        """Per-mode-block ACF peak — the runtime bottleneck. Delegates to
+        ``mode_block_peak_gb``. ``peak_factor`` absorbs FFT scratch, on-device
+        projection intermediates, and the other persistent terms.
         """
-        return peak_factor * 3 * B * self.Nt * self.bytes_per_complex / 1e9
+        return mode_block_peak_gb(B, self.Nt, self.bytes_per_complex, peak_factor)
 
     # --- aggregates / introspection ------------------------------------
 
@@ -209,7 +222,7 @@ class Resources:
             info = pynvml.nvmlDeviceGetMemoryInfo(handle)
         except Exception:  # pynvml.NVMLError isn't a stdlib type; rely on broad catch
             return None
-        return float(info.free) / 1e9, "pynvml"
+        return float(info.free) / _BYTES_PER_GB, "pynvml"
 
     @staticmethod
     def _gpu_jax_memstats_free_gb() -> Optional[tuple[float, str]]:
@@ -234,7 +247,7 @@ class Resources:
         in_use = stats.get("bytes_in_use", 0)
         if not limit:
             return None
-        return float(limit - in_use) / 1e9, "jax_memstats"
+        return float(limit - in_use) / _BYTES_PER_GB, "jax_memstats"
 
     @staticmethod
     def _cgroup_memory_limit_gb() -> Optional[tuple[float, str]]:
@@ -252,7 +265,7 @@ class Resources:
                     current = int(f.read().strip())
             except (FileNotFoundError, PermissionError, ValueError):
                 current = 0
-            return float(max_bytes - current) / 1e9, "cgroup_v2"
+            return float(max_bytes - current) / _BYTES_PER_GB, "cgroup_v2"
         except (FileNotFoundError, PermissionError, ValueError):
             pass
         # cgroup v1
@@ -267,7 +280,7 @@ class Resources:
                     current = int(f.read().strip())
             except (FileNotFoundError, PermissionError, ValueError):
                 current = 0
-            return float(max_bytes - current) / 1e9, "cgroup_v1"
+            return float(max_bytes - current) / _BYTES_PER_GB, "cgroup_v1"
         except (FileNotFoundError, PermissionError, ValueError):
             pass
         return None
@@ -283,14 +296,15 @@ class Resources:
         mem_per_node = os.environ.get("SLURM_MEM_PER_NODE")
         if mem_per_node:
             try:
-                return float(mem_per_node) / 1024.0, "slurm_env_per_node"
+                return float(mem_per_node) * _MIB / _BYTES_PER_GB, "slurm_env_per_node"
             except ValueError:
                 pass
         mem_per_cpu = os.environ.get("SLURM_MEM_PER_CPU")
         cpus_per_task = os.environ.get("SLURM_CPUS_PER_TASK")
         if mem_per_cpu and cpus_per_task:
             try:
-                return float(mem_per_cpu) * int(cpus_per_task) / 1024.0, "slurm_env_per_cpu"
+                return (float(mem_per_cpu) * int(cpus_per_task) * _MIB
+                        / _BYTES_PER_GB), "slurm_env_per_cpu"
             except ValueError:
                 pass
         return None
@@ -300,7 +314,7 @@ class Resources:
         """Host MemAvailable via psutil, then /proc/meminfo."""
         try:
             import psutil
-            return float(psutil.virtual_memory().available) / 1e9, "psutil"
+            return float(psutil.virtual_memory().available) / _BYTES_PER_GB, "psutil"
         except ImportError:
             pass
         except (OSError, AttributeError):
@@ -309,7 +323,7 @@ class Resources:
             with open("/proc/meminfo") as f:
                 for line in f:
                     if line.startswith("MemAvailable:"):
-                        return float(line.split()[1]) / 1e6, "proc_meminfo"
+                        return float(line.split()[1]) * _KIB / _BYTES_PER_GB, "proc_meminfo"
         except (FileNotFoundError, PermissionError):
             pass
         return None
