@@ -192,6 +192,45 @@ def get_s2p_map(primitive, supercell, lattice_points=None, tol=1e-5):
     return I2iL[:, 0].astype(np.int64)
 
 
+def get_p2s_map(primitive, supercell, lattice_points=None, tol=1e-5):
+    """1D map from primitive atom ``i`` to its supercell index ``I`` at the origin.
+
+    The inverse of ``get_s2p_map`` restricted to the origin lattice point
+    (``R = 0``) — the atom itself, not one of its ``N_lattice`` periodic images.
+    """
+    if lattice_points is None:
+        lattice_points = get_lattice_points(primitive.cell, supercell.cell,
+                                            extended=False)
+    I2iL, _ = map_I_to_iL(primitive, supercell, lattice_points=lattice_points, tol=tol)
+
+    L_origin = int(np.argmin(np.linalg.norm(np.asarray(lattice_points), axis=1)))
+    untranslated = I2iL[:, 1] == L_origin
+
+    p2s = []
+    for i in range(len(primitive)):
+        I = np.flatnonzero(untranslated & (I2iL[:, 0] == i))
+        if len(I) != 1:
+            raise ValueError(
+                f"get_p2s_map: primitive atom {i} has {len(I)} supercell atoms at "
+                f"the origin lattice point, expected exactly 1.")
+        p2s.append(int(I[0]))
+    p2s = np.array(p2s, dtype=np.int64)
+
+    # The origin image must sit ON the primitive atom. Counting is not enough:
+    # map_I_to_iL returns an assignment for any geometry, so a displaced primitive
+    # still yields exactly one match per atom.
+    dr = np.asarray(supercell.positions)[p2s] - np.asarray(primitive.positions)
+    dr_frac = dr @ np.linalg.inv(np.asarray(supercell.cell))
+    mic_distance = np.linalg.norm(
+        (dr_frac - np.rint(dr_frac)) @ np.asarray(supercell.cell), axis=1)
+    if mic_distance.max() > tol:
+        raise ValueError(
+            f"get_p2s_map: primitive atom {int(mic_distance.argmax())} is "
+            f"{mic_distance.max():.3e} A from its origin supercell atom (tol={tol}); "
+            f"primitive and supercell are inconsistent.")
+    return p2s
+
+
 def get_unit_grid_extended(q_points_frac, tol=1e-9):
     """Wrap q-points into ``[0, 1]`` and replicate boundary points across the cube."""
     q_unit = (q_points_frac + tol) % 1 - tol

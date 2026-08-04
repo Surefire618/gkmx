@@ -127,6 +127,13 @@ def _add_gk_parser(subparsers):
              "values (0.1) fit further into the tail — more robust for "
              "long-lifetime modes, noisier for short ones. Default 0.5.")
     p.add_argument(
+        "--no-enforce-translational-invariance",
+        dest="enforce_translational_invariance",
+        action="store_false", default=True,
+        help="Use the force constants as given, without imposing the "
+             "acoustic sum rule. Leaves the Gamma acoustic modes at "
+             "whatever frequency the sum-rule residual implies.")
+    p.add_argument(
         "--no-finite-time-correction", dest="correct_finite_time",
         action="store_false", default=True,
         help="Disable the 1/τ → 1/τ − 1/Tmax finite-time correction on "
@@ -196,6 +203,7 @@ def _cmd_gk(args):
         analytical=args.analytical,
         lifetime_fit_cutoff=args.lifetime_fit_cutoff,
         correct_finite_time=args.correct_finite_time,
+        enforce_translational_invariance=args.enforce_translational_invariance,
     )
 
     t_write = Timer(f"Writing {outfile}", prefix=_CLI_PREFIX)

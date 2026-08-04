@@ -5,7 +5,40 @@ import collections
 import numpy as np
 
 from . import _constants as C
-from .lattice_points import get_s2p_map, get_smallest_vectors
+from ._log import warn
+from .lattice_points import get_p2s_map, get_s2p_map, get_smallest_vectors
+
+
+ASR_TOL = 1e-4    # warn above this relative sum-rule residual
+
+
+def translational_invariance(fc, primitive, supercell,
+                             asr_tol=ASR_TOL, tol=1e-5):
+    """Impose the acoustic sum rule (ASR) on ``fc``; returns ``(fc, residual)``.
+
+    Translational invariance requires
+
+        sum_B Phi[i][B] = 0        for every primitive atom i, each 3x3 block
+
+    Enforced by removing the residual from the origin block:
+
+        Phi[i][I(i, R=0)] -= sum_B Phi[i][B]
+    """
+    fc = np.asarray(fc)
+    residual = fc.sum(axis=1)
+    abs_residual = float(np.abs(residual).max())
+    scale = float(np.abs(fc).max())
+    rel_residual = abs_residual / scale if scale > 0 else 0.0
+
+    out = fc.copy()
+    for p, I in enumerate(get_p2s_map(primitive, supercell, tol=tol)):
+        out[p, I] -= residual[p]
+
+    if rel_residual > asr_tol:
+        warn(f"acoustic sum rule violated: residual {abs_residual:.3e} eV/A^2 "
+             f"({rel_residual:.2e} of max|Phi|); removing it from the origin block "
+             f"(does not fix degeneracies away from Gamma).", prefix="gkmx.phonon")
+    return out, rel_residual
 
 
 Solution = collections.namedtuple(
@@ -207,7 +240,8 @@ class Phonon:
     """
 
     def __init__(self, force_constants, primitive, supercell,
-                 backend="numpy", precision="fp64", p2s_map=None, factor=1.0):
+                 backend="numpy", precision="fp64", p2s_map=None, factor=1.0,
+                 enforce_translational_invariance=True):
         """Build the solver.
 
         Args:
@@ -280,6 +314,12 @@ class Phonon:
 
         # `factor` rescales calculator-native FC to gkmx-internal eV/A^2;
         # for QE Ry/bohr^2 use (108.97 / 15.633)**2 ~ 48.59.
+        if enforce_translational_invariance:
+            force_constants, self.asr_residual = translational_invariance(
+                force_constants, primitive, supercell)
+        else:
+            self.asr_residual = None
+
         masses = np.asarray(primitive.get_masses(), dtype=self._dtype_real)
         fc_np = np.asarray(force_constants, dtype=self._dtype_real) * self._dtype_real(factor)
         mj = masses[j_of_k]

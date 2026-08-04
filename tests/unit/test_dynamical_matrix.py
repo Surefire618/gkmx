@@ -30,7 +30,9 @@ def setup():
 @pytest.fixture(scope="module")
 def dmx(setup):
     prim, sc, fc, _ = setup
+    # the checked-in DynamicalMatrix.nc reference predates ASR enforcement
     return DynamicalMatrix(force_constants=fc, primitive=prim, supercell=sc,
+                           enforce_translational_invariance=False,
                            with_group_velocity_matrices=True)
 
 
@@ -114,6 +116,7 @@ def test_jax_and_numpy_agree_with_reference(backend, setup):
     free)."""
     prim, sc, fc, ref = setup
     d = DynamicalMatrix(force_constants=fc, primitive=prim, supercell=sc,
+                        enforce_translational_invariance=False,
                         with_group_velocity_matrices=True, backend=backend)
     w_ref = np.sort(np.asarray(ref["w_qs"].data).flatten())
     assert np.abs(np.sort(d.w_qs.flatten()) - w_ref).max() \

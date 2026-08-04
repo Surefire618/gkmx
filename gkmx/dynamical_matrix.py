@@ -150,7 +150,7 @@ class DynamicalMatrix:
 
     def __init__(self, force_constants, primitive, supercell,
                  with_group_velocity_matrices=False, backend="numpy",
-                 precision="fp64"):
+                 precision="fp64", enforce_translational_invariance=True):
         """Build the adapter and solve on the commensurate q-grid.
 
         Args:
@@ -195,6 +195,7 @@ class DynamicalMatrix:
             supercell=self.supercell,
             backend=backend,
             precision=precision,
+            enforce_translational_invariance=enforce_translational_invariance,
         )
         self._solution = self._phonon.solve(
             q_points_frac=self._q_grid.points,

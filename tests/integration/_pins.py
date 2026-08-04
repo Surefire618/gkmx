@@ -36,11 +36,16 @@ KAPPA_RAW_TOL = 1e-3
 
 # Cubic average of `thermal_conductivity_corrected` (size-extrapolated), W/mK.
 #
+# 0.367793 -> 0.443956 (2026-08-04): sum rule now enforced by default;
+# KI_B2_MLIP violates it by 6.9 % of max|Phi|, moving the Gamma acoustics off
+# zero. Bisected: enforce_translational_invariance=False reproduces
+# 0.367793173. fp64 gives 0.444028414, fp32 0.443955690.
+#
 # 0.367602 -> 0.367793 (2026-08-03): qhgk_tau_eff converts w to rad/fs via
 # _constants.omega_to_rad_fs, not the rounded literal 0.1 (1.81 % high).
 # Only the off-diagonal moves. Bisected: restoring 0.1 reproduces 0.367602. NB
 # the shift is inside the tolerance, so this pin would not have failed alone.
-KAPPA_CORRECTED_REF = 0.367793
+KAPPA_CORRECTED_REF = 0.443956
 KAPPA_CORRECTED_TOL = 5e-3
 
 # Anharmonicity score: std(f_DFT − f_harmonic) / std(f_DFT).

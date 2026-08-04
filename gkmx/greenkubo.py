@@ -620,7 +620,8 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
               precision=None, max_mem_gb=4.0, freq=None,
               factorization="wick", analytical=False,
               lifetime_fit_cutoff=0.5,
-              correct_finite_time=True):
+              correct_finite_time=True,
+              enforce_translational_invariance=True):
     """Run the full Green-Kubo thermal-conductivity pipeline on an MD trajectory.
 
     The pipeline:
@@ -775,6 +776,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
         dmx = DynamicalMatrix(
             force_constants=np.asarray(fc), primitive=primitive, supercell=supercell,
             with_group_velocity_matrices=True, backend=backend, precision=p.name,
+            enforce_translational_invariance=enforce_translational_invariance,
         )
         if dmx_path:
             _talk(f"Saving DynamicalMatrix to {dmx_path}")
@@ -787,6 +789,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
         dmx = DynamicalMatrix(
             force_constants=fc, primitive=primitive, supercell=supercell,
             with_group_velocity_matrices=True, backend=backend, precision=p.name,
+            enforce_translational_invariance=enforce_translational_invariance,
         )
         if dmx_path:
             _talk(f"Saving DynamicalMatrix to {dmx_path}")

@@ -42,7 +42,9 @@ def test_solve_shapes_invariants_and_reference(setup):
     prim, sc, fc, q, ref = setup
     Nq, Ns = len(q), 3 * len(prim)
 
-    sol = Phonon(fc, prim, sc).solve(q, with_group_velocity_matrices=True)
+    # the checked-in DynamicalMatrix.nc reference predates ASR enforcement
+    sol = Phonon(fc, prim, sc, enforce_translational_invariance=False).solve(
+        q, with_group_velocity_matrices=True)
     assert isinstance(sol, SolutionWithGVM)
     assert sol.w_qs.shape == (Nq, Ns)
     assert sol.w_inv_qs.shape == (Nq, Ns)
@@ -62,7 +64,8 @@ def test_solve_shapes_invariants_and_reference(setup):
     assert np.abs(overlap - np.eye(Ns)[None]).max() < TOL_FP64
 
     q_ref = np.asarray(ref["q_points"].data)
-    sol_at_ref = Phonon(fc, prim, sc).solve(q_ref, with_velocities=False)
+    sol_at_ref = Phonon(fc, prim, sc, enforce_translational_invariance=False).solve(
+        q_ref, with_velocities=False)
     w_gkmx = np.sort(np.abs(np.asarray(sol_at_ref.w_qs)), axis=-1)
     w_ref = np.sort(np.abs(np.asarray(ref["w_qs"].data)), axis=-1)
     assert w_gkmx.shape == w_ref.shape

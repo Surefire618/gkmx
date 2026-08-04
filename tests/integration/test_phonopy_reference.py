@@ -71,7 +71,11 @@ def _solve(fixture_name):
     sc.set_masses(np.asarray(ref["supercell_masses"]))
 
     factor = (float(ref["unit_conversion_factor"]) / C.omega_to_THz) ** 2
-    sol = Phonon(fc, prim, sc, backend="numpy", factor=factor).solve(
+    # The references are generated with phonopy's own symmetrize_fc=False, so
+    # both sides must consume the raw force constants for this to compare
+    # solvers rather than preprocessing.
+    sol = Phonon(fc, prim, sc, backend="numpy", factor=factor,
+                 enforce_translational_invariance=False).solve(
         np.asarray(ref["q_points"]),
         with_velocities=True, with_group_velocity_matrices=True,
     )
