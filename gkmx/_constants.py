@@ -16,7 +16,8 @@ FEMTO = 1e-3 * PICO
 THZ = 1 / PICO
 BOLTZMANN = units._k
 
-omega_to_THz = (EV / AA**2 / AMU) ** 0.5 / THZ / 2 / pi  # ~15.633  (gkmx w -> THz)
+omega_to_THz = (EV / AA**2 / AMU) ** 0.5 / THZ / 2 / pi   # ~15.633  (gkmx w -> THz)
+omega_to_rad_fs = (EV / AA**2 / AMU) ** 0.5 * FEMTO       # ~0.098227 (gkmx w -> rad/fs)
 THz_to_cm = THZ / units._c / 100                          # ~33.356  (THz -> 1/cm)
 gv_to_AA_fs = omega_to_THz / 1000                         # group velocity to A/fs
 to_W_mK = EV * 1e25                                       # eV/fs/A -> W/mK

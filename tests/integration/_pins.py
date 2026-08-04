@@ -35,7 +35,12 @@ KAPPA_RAW_REF = 0.117222
 KAPPA_RAW_TOL = 1e-3
 
 # Cubic average of `thermal_conductivity_corrected` (size-extrapolated), W/mK.
-KAPPA_CORRECTED_REF = 0.367602
+#
+# 0.367602 -> 0.367793 (2026-08-03): qhgk_tau_eff converts w to rad/fs via
+# _constants.omega_to_rad_fs, not the rounded literal 0.1 (1.81 % high).
+# Only the off-diagonal moves. Bisected: restoring 0.1 reproduces 0.367602. NB
+# the shift is inside the tolerance, so this pin would not have failed alone.
+KAPPA_CORRECTED_REF = 0.367793
 KAPPA_CORRECTED_TOL = 5e-3
 
 # Anharmonicity score: std(f_DFT − f_harmonic) / std(f_DFT).
