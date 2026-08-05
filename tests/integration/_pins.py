@@ -47,6 +47,12 @@ KAPPA_RAW_TOL = 1e-3
 # the shift is inside the tolerance, so this pin would not have failed alone.
 KAPPA_CORRECTED_REF = 0.443956
 KAPPA_CORRECTED_TOL = 5e-3
+#
+# NB this quantity is not reproducible below ~2e-4 across precisions or
+# backends: it rides on the QHGK channel, whose v_qssa is basis-dependent
+# inside a degenerate multiplet, and tau/cv are fitted per mode so they are
+# not constant across one. Do not tighten TOL below that without first
+# averaging tau/cv over multiplets. See test_precision_switch.py.
 
 # Anharmonicity score: std(f_DFT − f_harmonic) / std(f_DFT).
 SIGMA_REF = 0.409901
