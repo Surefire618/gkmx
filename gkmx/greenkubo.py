@@ -585,6 +585,12 @@ def _analytical_hfacfs(time_fs, tau_qs, cv_qs, v_qsa, v_qssa, w_qs, w_inv_qs,
     wi = np.asarray(w_inv_qs, dtype=dtype_real)
     with np.errstate(divide="ignore", invalid="ignore"):
         gamma = 0.5 / tau
+    # tau = 0 marks a mode whose lifetime fit failed. It has no linewidth, so it
+    # carries no coherence and is dropped from the pair sum below; keeping
+    # gamma = inf would give exp(-inf * 0) = nan at t = 0.
+    no_linewidth = ~np.isfinite(gamma)
+    gamma = np.where(no_linewidth, 0.0, gamma)
+
     w_s = w[:, :, None]; w_sp = w[:, None, :]
     wi_s = wi[:, :, None]; wi_sp = wi[:, None, :]
     pair_weight = (w_s + w_sp) ** 2 * (wi_s * wi_sp) / 4
@@ -592,10 +598,11 @@ def _analytical_hfacfs(time_fs, tau_qs, cv_qs, v_qsa, v_qssa, w_qs, w_inv_qs,
     Delta = w_s - w_sp
 
     v_ssa = np.asarray(v_qssa)
-    vv = (v_ssa[..., :, None] * np.swapaxes(v_ssa, 1, 2)[..., None, :].conj()).real
+    vv = (v_ssa[..., :, None] * np.swapaxes(v_ssa, 1, 2)[..., None, :]).real
     vv = vv.astype(dtype_real)
     cv_bcast = cv[:, None, :]
-    prefactor = pair_weight * cv_bcast
+    pair_ok = ~(no_linewidth[:, :, None] | no_linewidth[:, None, :])
+    prefactor = pair_weight * cv_bcast * pair_ok
 
     C_QHGK = np.zeros((Nt, 3, 3), dtype=dtype_real)
     t_chunk = max(1, min(Nt, 256))
