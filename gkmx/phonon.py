@@ -95,6 +95,7 @@ def _solve_kernel(xp, eigh_fn, fc_mw, j_of_k, svec_frac, multi_mask,
     D_q = xp.einsum(
         "qki,ikab,kj->qiajb",
         avg_phase, fc_mw.astype(dtype_complex), K_to_j,
+        optimize=True,
     )
     Ns = 3 * N_p
     D_q = D_q.reshape(-1, Ns, Ns)
@@ -114,12 +115,13 @@ def _solve_kernel(xp, eigh_fn, fc_mw, j_of_k, svec_frac, multi_mask,
     dD_dq = xp.einsum(
         "qkia,ikbc,kj->qaibjc",
         dphase_avg, fc_mw.astype(dtype_complex), K_to_j,
+        optimize=True,
     )
     dD_dq = dD_dq.reshape(-1, 3, Ns, Ns)
     # Matches phonopy's derivative_dynmat.c; see memory/project_dDdq_per_element_drift.md.
     dD_dq = 0.5 * (dD_dq + xp.conj(xp.swapaxes(dD_dq, -1, -2)))
 
-    M = xp.einsum("qjn,qanm,qkm->qajk", xp.conj(e), dD_dq, e)
+    M = xp.einsum("qjn,qanm,qkm->qajk", xp.conj(e), dD_dq, e, optimize=True)
 
     return w2, e, M, D_q
 
@@ -188,7 +190,8 @@ def _symmetrize_v_site(v_qsa, q_frac, rots_frac, recip_lattice, tol=1e-5):
     count_safe = np.where(count > 0, count, 1).astype(real_dt)
 
     out = np.einsum("oq,oba,qsa->qsb",
-                    mask.astype(v_qsa.dtype), r_cart.astype(v_qsa.dtype), v_qsa)
+                    mask.astype(v_qsa.dtype), r_cart.astype(v_qsa.dtype), v_qsa,
+                    optimize=True)
     out = out / count_safe[:, None, None]
     if (count == 0).any():
         empty = count == 0
