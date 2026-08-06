@@ -585,8 +585,27 @@ def _fit_tau(g2, dt, thresh=0.1, maxfev=2000):
         return np.nan
 
 
+def _qhgk_coherence_kernel(t_fs, w, wi, gamma):
+    """Time-domain QHGK coherence kernel; its integral over t is `qhgk_tau_eff`.
+
+        K(t) = e^{-G t} [ w_plus cos((w_s - w_s') t) + w_minus cos((w_s + w_s') t) ]
+
+    `w`, `wi` in rad/fs (scaled by `C.omega_to_rad_fs`), `gamma` in 1/fs, `t` in fs.
+    """
+    w_s = w[:, :, None]; w_sp = w[:, None, :]
+    wi_s = wi[:, :, None]; wi_sp = wi[:, None, :]
+    w_plus = (w_s + w_sp) ** 2 * (wi_s * wi_sp) / 4
+    w_minus = (w_s - w_sp) ** 2 * (wi_s * wi_sp) / 4
+    Gamma = gamma[:, :, None] + gamma[:, None, :]
+
+    tt = np.asarray(t_fs)[:, None, None, None]
+    return np.exp(-Gamma[None] * tt) * (
+        w_plus * np.cos((w_s - w_sp)[None] * tt)
+        + w_minus * np.cos((w_s + w_sp)[None] * tt))
+
+
 def _analytical_hfacfs(time_fs, tau_qs, cv_qs, v_qsa, v_qssa, w_qs, w_inv_qs,
-                        dtype_real):
+                        dtype_real, tol=1e-4):
     """Analytical BTE and QHGK time-resolved HFACFs (thesis Eq. 5.52, Fiorentino-Baroni form)."""
     t = np.asarray(time_fs, dtype=dtype_real)
     Nt = t.size
@@ -606,8 +625,14 @@ def _analytical_hfacfs(time_fs, tau_qs, cv_qs, v_qsa, v_qssa, w_qs, w_inv_qs,
                                 coords={keys.time: t})),
         dtype=dtype_real)
 
-    w = np.asarray(w_qs, dtype=dtype_real)
-    wi = np.asarray(w_inv_qs, dtype=dtype_real)
+    # Same rad/fs conversion and acoustic mask as `kappa.qhgk_tau_eff`: Gamma is
+    # in 1/fs, so w must be too or the coherences beat 1/omega_to_rad_fs too fast.
+    scale = np.dtype(dtype_real).type(C.omega_to_rad_fs)
+    w = np.asarray(w_qs, dtype=dtype_real) * scale
+    wi = np.asarray(w_inv_qs, dtype=dtype_real) / scale
+    w = np.where(w < tol, 0, w)
+    wi = np.where(w == 0, 0, wi)
+
     with np.errstate(divide="ignore", invalid="ignore"):
         gamma = 0.5 / tau
     # tau = 0 marks a mode whose lifetime fit failed. It has no linewidth, so it
@@ -616,26 +641,17 @@ def _analytical_hfacfs(time_fs, tau_qs, cv_qs, v_qsa, v_qssa, w_qs, w_inv_qs,
     no_linewidth = ~np.isfinite(gamma)
     gamma = np.where(no_linewidth, 0.0, gamma)
 
-    w_s = w[:, :, None]; w_sp = w[:, None, :]
-    wi_s = wi[:, :, None]; wi_sp = wi[:, None, :]
-    pair_weight = (w_s + w_sp) ** 2 * (wi_s * wi_sp) / 4
-    Gamma = gamma[:, :, None] + gamma[:, None, :]
-    Delta = w_s - w_sp
-
     v_ssa = np.asarray(v_qssa)
     vv = (v_ssa[..., :, None] * np.swapaxes(v_ssa, 1, 2)[..., None, :]).real
     vv = vv.astype(dtype_real)
-    cv_bcast = cv[:, None, :]
     pair_ok = ~(no_linewidth[:, :, None] | no_linewidth[:, None, :])
-    prefactor = pair_weight * cv_bcast * pair_ok
+    prefactor = cv[:, None, :] * pair_ok
 
     C_QHGK = np.zeros((Nt, 3, 3), dtype=dtype_real)
     t_chunk = max(1, min(Nt, 256))
     for t0 in range(0, Nt, t_chunk):
         t1 = min(Nt, t0 + t_chunk)
-        tt = t[t0:t1][:, None, None, None]
-        kernel = (np.exp(-Gamma[None, ...] * tt)
-                  * np.cos(Delta[None, ...] * tt))
+        kernel = _qhgk_coherence_kernel(t[t0:t1], w, wi, gamma)
         C_QHGK[t0:t1] = C.to_W_mK * np.einsum(
             "tqsp,qsp,qspab->tab", kernel, prefactor, vv, optimize=True,
         ).astype(dtype_real)

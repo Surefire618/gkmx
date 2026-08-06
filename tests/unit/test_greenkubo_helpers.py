@@ -21,9 +21,11 @@ from gkmx.greenkubo import (
     _cumtrapz,
     _fit_tau,
     _gk_prefactor,
+    _qhgk_coherence_kernel,
     compute_cv_tau,
 )
 from gkmx.io import parse_force_constants
+from gkmx.kappa import qhgk_tau_eff
 
 from .._tolerances import TOL_FP64, TOL_FP64_DERIVED
 
@@ -342,3 +344,35 @@ def test_average_over_multiplets_skips_failed_fits():
     assert np.isnan(cv[0, 2])
     assert tau[0, 0] == pytest.approx(100.0)   # sole survivor
     assert np.isnan(tau[0, 1]) and tau[0, 2] == 0.0
+
+
+def test_qhgk_kernel_integrates_to_tau_eff():
+    """``int_0^inf K(t) dt`` must reproduce `kappa.qhgk_tau_eff`.
+
+    The time-resolved HFACF and the closed-form kappa are the same formula
+    written twice, in different files, with nothing else tying them together --
+    which is how the rad/fs conversion could sit in one and not the other. This
+    is the guard: it fails if either side changes units, drops the antiresonant
+    ``(w_s + w_s')`` term, or reweights the pair.
+
+    The two sides scale independently: `qhgk_tau_eff` converts internally, the
+    kernel takes rad/fs, so a shared mistake cannot cancel.
+    """
+    rng = np.random.default_rng(7)
+    Nq, Ns = 3, 3
+    tau = rng.uniform(20.0, 120.0, (Nq, Ns))
+    w = rng.uniform(0.5, 4.0, (Nq, Ns))
+    wi = 1.0 / w
+
+    # T >> 2*tau_max so the tail is dead; dt << the fastest beat period (8 fs
+    # here). _cumtrapz is O(dt^2): 9.3e-06 at dt=0.5, 9.3e-08 here.
+    t = np.arange(0.0, 4000.0, 0.05)
+    got = np.trapezoid(
+        _qhgk_coherence_kernel(t, w * C.omega_to_rad_fs,
+                               wi / C.omega_to_rad_fs, 0.5 / tau),
+        t, axis=0)
+    expect = qhgk_tau_eff(w, wi, tau)
+
+    rel = np.abs(got - expect).max() / np.abs(expect).max()
+    assert rel < TOL_FP64_DERIVED, (
+        f"kernel integral does not match qhgk_tau_eff: rel={rel:.2e}")
