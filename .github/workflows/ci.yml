@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch supersedes the previous run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Runners give 4 cores. Left unset, OpenBLAS spawns one thread per core in
+  # every test and the oversubscription costs more than it buys.
+  OMP_NUM_THREADS: "2"
+  OPENBLAS_NUM_THREADS: "2"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install "ruff>=0.16,<0.17"
+      - run: ruff check .
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false        # a 3.10-only break should not hide a 3.12 one
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      # phonopy is test-only: test_phonopy_Si_strict.py importorskips it and
+      # runs phonopy.load() in process. Without it those 9 tests skip silently.
+      - run: pip install -e ".[dev,jax]" phonopy
+
+      # Guard against a phonopy that installs but does not import — the failure
+      # would otherwise show up as a green run with 9 tests quietly skipped.
+      - name: optional test deps are importable
+        run: python -c "import phonopy, jax; print(phonopy.__version__, jax.__version__)"
+
+      # -rs lists skip reasons, so a silently-skipped suite is visible in the log.
+      - run: pytest -q -rs --durations=10
+
+  # Run all test without jax. The code should be possible to run with numpy-only backend.
+  numpy-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+
+      # Without this the job silently becomes a duplicate of `test` the moment
+      # anything pulls jax into the base dependencies.
+      - name: jax must be absent here
+        run: |
+          python - <<'PY'
+          import importlib.util
+          assert importlib.util.find_spec("jax") is None, \
+              "jax is installed: this job no longer proves the numpy path stands alone"
+          PY
+
+      # These three parametrize backend="jax" with no importorskip, so they
+      # error rather than skip when jax is missing. Deselected by exact node id
+      # -- `-k "not jax"` would also drop the [numpy] half of the first one.
+      # The durable fix is pytest.importorskip("jax") at those three sites; keep
+      # this list in step with any new jax-parametrized test until then.
+      - run: |
+          pytest -q -rs \
+            --deselect "tests/unit/test_dynamical_matrix.py::test_jax_and_numpy_agree_with_reference[jax]" \
+            --deselect "tests/integration/test_end_to_end_kappa.py::TestEndToEndKappa::test_kappa_no_interp[jax]" \
+            --deselect "tests/integration/test_end_to_end_kappa.py::TestEndToEndKappa::test_kappa_corrected[jax]"
