@@ -4,7 +4,6 @@ import pytest
 
 from gkmx import keys
 
-
 # Pinned field-name strings. Renaming any of these is a schema change for
 # cached DMX files (``DynamicalMatrix.nc``), GK output datasets
 # (``greenkubo.nc``), and external consumers (gkx, analysis scripts).

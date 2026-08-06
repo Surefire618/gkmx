@@ -11,8 +11,8 @@ import pytest
 from ase import Atoms
 
 from gkmx.io import (
-    _NumpyEncoder,
     _expand_compressed,
+    _NumpyEncoder,
     atoms2json,
     json2atoms,
     parse_force_constants,

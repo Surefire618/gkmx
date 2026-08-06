@@ -38,7 +38,7 @@ def test_unknown_subcommand_and_missing_arg_exit():
 def test_resolve_backend_explicit_and_auto(monkeypatch):
     """Explicit ``"numpy"`` / ``"jax"`` pass through; ``"auto"`` falls
     back to ``"numpy"`` when no GPU is visible."""
-    import gkmx.cli as cli
+    from gkmx import cli
     assert _resolve_backend("numpy") == "numpy"
     assert _resolve_backend("jax") == "jax"
     monkeypatch.setattr(cli, "_gpu_visible", lambda: False)

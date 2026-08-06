@@ -22,7 +22,7 @@ consume different fields.
 
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 import numpy as np
@@ -54,7 +54,7 @@ FIXTURES = [
 ]
 
 
-@lru_cache(maxsize=None)
+@cache
 def _solve(fixture_name):
     """Load fixture and run gkmx once per material; cache for the rest of the session."""
     d = DATA_ROOT / fixture_name

@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 from ._log import warn as _warn
 
 
 class Backend:
-    __slots__ = ("name", "xp", "fft", "ifft", "rfft", "irfft",
-                 "next_fast_len", "to_device", "to_host")
+    __slots__ = (
+        "fft",
+        "ifft",
+        "irfft",
+        "name",
+        "next_fast_len",
+        "rfft",
+        "to_device",
+        "to_host",
+        "xp",
+    )
 
     def __init__(self, name: str = "numpy"):
         self.name = name
         if name == "numpy":
             import numpy as np
-            from scipy.fft import fft, ifft, rfft, irfft, next_fast_len
+            from scipy.fft import fft, ifft, irfft, next_fast_len, rfft
             self.xp = np
             self.fft = fft
             self.ifft = ifft
@@ -26,8 +34,8 @@ class Backend:
             self.to_device = _identity
             self.to_host = _identity
         elif name == "jax":
-            import numpy as np
             import jax.numpy as jnp
+            import numpy as np
             from scipy.fft import next_fast_len
             self.xp = jnp
             self.fft = jnp.fft.fft
@@ -72,7 +80,7 @@ class Backend:
             return out
         return (re.astype(dtype) + 1j * im.astype(dtype))
 
-    def fft_autocorrelate(self, x, *, nfft: int, tau_max: Optional[int] = None,
+    def fft_autocorrelate(self, x, *, nfft: int, tau_max: int | None = None,
                            norm=None, hann=None):
         """FFT autocorrelation ``ifft(|fft(x)|^2)``, sliced to tau_max with optional norm and Hann taper."""
         xp = self.xp

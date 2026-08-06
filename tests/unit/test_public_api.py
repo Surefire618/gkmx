@@ -2,7 +2,6 @@
 
 import gkmx
 
-
 EXPECTED_ALL = {
     "DynamicalMatrix",
     "Phonon",

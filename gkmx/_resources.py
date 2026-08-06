@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import warnings
 from dataclasses import dataclass
-from typing import ClassVar, Optional
+from typing import ClassVar
 
 _BYTES_PER_GB = 1e9
 _KIB = 1024
@@ -59,7 +59,7 @@ class MemoryCost:
         return 3 * self.Nat
 
     @property
-    def I(self) -> int:  # noqa: E743 — matches the supercell-eigenvector dim symbol
+    def I(self) -> int:
         """Supercell-basis eigenvector dim: ``3 · N_sc = 3·Nat``."""
         return 3 * self.Nat
 
@@ -162,8 +162,8 @@ class Plan:
     """
     max_mem_gb: float
     origin: str
-    resources: Optional["Resources"] = None
-    cost: Optional[MemoryCost] = None
+    resources: Resources | None = None
+    cost: MemoryCost | None = None
     target_block_gb: float = 0.0
     peak_factor: float = 0.0
 
@@ -209,7 +209,7 @@ class Resources:
     # -----------------------------------------------------------------
 
     @staticmethod
-    def _gpu_pynvml_free_gb() -> Optional[tuple[float, str]]:
+    def _gpu_pynvml_free_gb() -> tuple[float, str] | None:
         """Try pynvml. Reports GPU-wide free across all processes (the truthful
         value on shared GPUs, unlike JAX's per-process quota)."""
         try:
@@ -225,7 +225,7 @@ class Resources:
         return float(info.free) / _BYTES_PER_GB, "pynvml"
 
     @staticmethod
-    def _gpu_jax_memstats_free_gb() -> Optional[tuple[float, str]]:
+    def _gpu_jax_memstats_free_gb() -> tuple[float, str] | None:
         """JAX device.memory_stats(). Process-local; under-reports on shared GPUs."""
         try:
             import jax
@@ -250,7 +250,7 @@ class Resources:
         return float(limit - in_use) / _BYTES_PER_GB, "jax_memstats"
 
     @staticmethod
-    def _cgroup_memory_limit_gb() -> Optional[tuple[float, str]]:
+    def _cgroup_memory_limit_gb() -> tuple[float, str] | None:
         """Read cgroup memory limit directly (v2 then v1). Authoritative for
         SLURM/Kubernetes/container workloads."""
         # cgroup v2
@@ -286,7 +286,7 @@ class Resources:
         return None
 
     @staticmethod
-    def _slurm_env_limit_gb() -> Optional[tuple[float, str]]:
+    def _slurm_env_limit_gb() -> tuple[float, str] | None:
         """Fallback: parse SLURM_MEM_PER_NODE / SLURM_MEM_PER_CPU env vars.
 
         Used only when cgroup reads fail. Less accurate (excludes
@@ -310,7 +310,7 @@ class Resources:
         return None
 
     @staticmethod
-    def _host_available_gb() -> Optional[tuple[float, str]]:
+    def _host_available_gb() -> tuple[float, str] | None:
         """Host MemAvailable via psutil, then /proc/meminfo."""
         try:
             import psutil
@@ -333,7 +333,7 @@ class Resources:
     # -----------------------------------------------------------------
 
     @classmethod
-    def detect(cls, backend: str) -> "Resources":
+    def detect(cls, backend: str) -> Resources:
         """Detect free memory for ``backend`` (``"numpy"`` or ``"jax"``).
 
         Order of preference, most-trustworthy first:
@@ -439,7 +439,7 @@ class Resources:
         return default
 
     @staticmethod
-    def validate_override(raw_str: str) -> Optional[float]:
+    def validate_override(raw_str: str) -> float | None:
         """Parse ``GKMX_MAX_MEM_GB`` value; warn and return None on invalid input."""
         try:
             value = float(raw_str)
@@ -459,7 +459,7 @@ class Resources:
         bytes_per_real: int = 4,
         reserve_gb: float = 1.0,
         safety_buffer: float = 0.7,
-        peak_factor: Optional[float] = None,
+        peak_factor: float | None = None,
         floor_gb: float = 0.5,
     ) -> Plan:
         """Resolve max_mem_gb at compute_cv_tau entry.

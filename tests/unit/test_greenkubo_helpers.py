@@ -7,7 +7,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 import xarray as xr
-from ase import io as ase_io, units
+from ase import io as ase_io
+from ase import units
 
 from gkmx import _constants as C
 from gkmx import keys
@@ -207,8 +208,8 @@ def _synthetic_modes(n_dead=0, seed=7, coherent=True, degenerate=False):
         for s in range(Ns):
             v_qssa[q, s, s] = v_qsa[q, s]
 
-    return dict(tau_qs=tau, cv_qs=cv, v_qsa=v_qsa, v_qssa=v_qssa,
-                w_qs=w, w_inv_qs=1.0 / w)
+    return {"tau_qs": tau, "cv_qs": cv, "v_qsa": v_qsa, "v_qssa": v_qssa,
+            "w_qs": w, "w_inv_qs": 1.0 / w}
 
 
 def test_analytical_bte_hfacf_integrates_to_the_mode_sum():

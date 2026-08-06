@@ -144,7 +144,7 @@ def _add_gk_parser(subparsers):
 
 
 def _cmd_gk(args):
-    from . import open_dataset, get_kappa
+    from . import get_kappa, open_dataset
 
     file = args.file
     outfile = args.outfile

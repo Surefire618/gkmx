@@ -32,7 +32,7 @@ class Precision:
     name: str
 
     @classmethod
-    def from_str(cls, name: str) -> "Precision":
+    def from_str(cls, name: str) -> Precision:
         """Build a Precision from a string.
 
         Args:
@@ -51,7 +51,7 @@ class Precision:
         return cls(real=real, complex=complex_, name=name)
 
     @classmethod
-    def default(cls) -> "Precision":
+    def default(cls) -> Precision:
         """Return the process-wide default Precision.
 
         Resolution order: ``set_default(...)`` last call wins; otherwise
@@ -61,7 +61,7 @@ class Precision:
         return cls.from_str(_DEFAULT)
 
     @classmethod
-    def resolve(cls, name: str | None = None) -> "Precision":
+    def resolve(cls, name: str | None = None) -> Precision:
         """Return ``from_str(name)`` if ``name`` is given, else ``default()``."""
         return cls.from_str(name) if name is not None else cls.default()
 

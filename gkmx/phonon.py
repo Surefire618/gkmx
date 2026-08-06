@@ -8,7 +8,6 @@ from . import _constants as C
 from ._log import warn
 from .lattice_points import get_p2s_map, get_s2p_map, get_smallest_vectors
 
-
 ASR_TOL = 1e-4    # warn above this relative sum-rule residual
 
 
@@ -197,8 +196,18 @@ def _symmetrize_v_site(v_qsa, q_frac, rots_frac, recip_lattice, tol=1e-5):
     return out
 
 
-def _rotate_degenerate_subspaces(w2, e, M,
-                                  probe=np.array([1.0, 2.0, 3.0]) / np.sqrt(14.0)):
+# Degenerate modes have no preferred basis: any mixture of equal-frequency
+# eigenvectors is also an eigenvector, so eigh's choice among them is arbitrary.
+# Stepping off q along `probe` splits them, and degenerate perturbation theory
+# says the physical basis is the one diagonalizing dD/dq . probe over the block --
+# the modes that stay eigenvectors as q moves. The direction has to be generic:
+# along a symmetry axis the block can stay degenerate and the basis stays free.
+# [1,2,3]/sqrt(14) is phonopy's own (group_velocity.py:157, "Give an random
+# direction to break symmetry"), matched so v_qssa is comparable to theirs.
+_PERTURB_PROBE = np.array([1.0, 2.0, 3.0]) / np.sqrt(14.0)
+
+
+def _rotate_degenerate_subspaces(w2, e, M, probe=_PERTURB_PROBE):
     """Rotate eigh's arbitrary degenerate basis to phonopy's _perturb_D convention."""
     Nq, _, Ns, _ = M.shape
     w_abs = np.sqrt(np.abs(w2))

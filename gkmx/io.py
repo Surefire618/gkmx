@@ -44,7 +44,7 @@ def parse_force_constants(fc_file, two_dim=False):
         fc = np.loadtxt(path)
         return fc
 
-    if "hdf5" in name or name.endswith(".hdf5") or name.endswith(".h5"):
+    if "hdf5" in name or name.endswith((".hdf5", ".h5")):
         fc = _parse_force_constants_hdf5(path)
     elif "force_constants" in name or name == "force_constants":
         fc = _parse_force_constants_text(path)

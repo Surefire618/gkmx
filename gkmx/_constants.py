@@ -3,7 +3,6 @@
 from ase import units
 from numpy import pi
 
-
 window_factor = 1.0
 default_filter_prominence = 0.05
 

@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from ase import units
 
-from gkmx import _constants as C
 from gkmx.kappa import qhgk_tau_eff
 
 from .._tolerances import TOL_FP64, TOL_FP64_DERIVED

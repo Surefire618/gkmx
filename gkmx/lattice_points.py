@@ -14,7 +14,7 @@ def get_lattice_points(cell, supercell, extended=True, tolerance=1e-5, sort=True
     sc_arr = np.asarray(scell)
 
     supercell_matrix = np.round(sc_arr @ la.inv(lattice)).astype(int)
-    n_expected = int(round(abs(la.det(supercell_matrix))))
+    n_expected = round(abs(la.det(supercell_matrix)))
 
     M_abs = np.abs(supercell_matrix)
     bound = int(np.ceil(0.5 * M_abs.sum(axis=0).max())) + 1

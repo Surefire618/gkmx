@@ -12,8 +12,8 @@ from gkmx.lattice_points import (
     get_unit_grid_extended,
     map_I_to_iL,
 )
-from gkmx.mic import fold as mic_fold
 from gkmx.mic import _IMAGE_SHIFTS, is_orthogonal
+from gkmx.mic import fold as mic_fold
 
 from .._tolerances import TOL_FP64
 
@@ -40,7 +40,7 @@ def test_lattice_points_and_commensurate_q(material):
     M = np.rint(
         np.linalg.solve(np.asarray(prim.cell).T, np.asarray(sc.cell).T).T
     ).astype(int)
-    assert len(lps) == int(round(abs(np.linalg.det(M))))
+    assert len(lps) == round(abs(np.linalg.det(M)))
     assert np.linalg.norm(lps[0]) < 1e-10
 
     from ase.cell import Cell

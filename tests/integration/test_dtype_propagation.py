@@ -16,7 +16,6 @@ from gkmx import precision
 from gkmx.greenkubo import get_kappa
 from gkmx.precision import Precision
 
-
 _GKMX_PRODUCED_ATTRS = {"sigma", "gk_window_fs", "gk_prefactor",
                         "filter_prominence"}
 

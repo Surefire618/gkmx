@@ -152,7 +152,7 @@ def get_interpolation_data(dmx, lifetimes, cv, nq_max=20, quasi_harmonic_greenku
     # Internal compute (curve_fit, Qhull, scipy) runs at fp64 for stability;
     # final dataset values follow dmx._dtype_real.
     real_dt = dmx._dtype_real
-    _r = lambda x: np.asarray(x, dtype=real_dt)            # noqa: E731
+    _r = lambda x: np.asarray(x, dtype=real_dt)
     results = {
         keys.interpolation_fit_slope: _r(m_last),
         keys.interpolation_fit_intercept: _r(y0_last),

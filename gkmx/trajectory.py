@@ -1,7 +1,7 @@
 """xarray-trajectory helpers (open_dataset, Trajectory, derived properties)."""
 
-from pathlib import Path
 import warnings
+from pathlib import Path
 
 import numpy as np
 import xarray as xr
@@ -10,7 +10,6 @@ from ase import units
 from . import _constants as C
 from . import keys
 from .io import json2atoms
-
 
 # gkmx internals expect heat_flux in eV/(Å²·fs). Vibes / legacy-gkx writers
 # emit eV/(Å²·ps) — silent 1e6 error in κ if not converted. See

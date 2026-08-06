@@ -62,9 +62,9 @@ from ase import io as ase_io
 try:
     import phonopy
     from phonopy.interface.vasp import read_vasp
-    from phonopy.structure.atoms import PhonopyAtoms
     from phonopy.phonon.degeneracy import degenerate_sets
     from phonopy.phonon.group_velocity import GroupVelocity
+    from phonopy.structure.atoms import PhonopyAtoms
     from phonopy.utils import similarity_transformation
     _PHONOPY_IMPORT_ERROR: Exception | None = None
 except ImportError as _e:
@@ -179,7 +179,7 @@ class GroupVelocityMatrix(GroupVelocity):
             cutoff_frequency=cutoff_frequency,
         )
         self._group_velocity_matrices = None
-        self._complex_dtype = "c%d" % (np.dtype("double").itemsize * 2)
+        self._complex_dtype = f'c{np.dtype("double").itemsize * 2}'
 
     def run(self, q_points, perturbation=None):
         self._q_points = q_points
@@ -245,7 +245,7 @@ def _write_aims_geometry(atoms: Atoms, path: Path) -> None:
         path.write_text("".join(lines[5:]))
 
 
-def _load_phonopy(source) -> "phonopy.Phonopy":
+def _load_phonopy(source) -> phonopy.Phonopy:
     """Load a phonopy Phonopy from one of the two supported source kinds.
 
     Returns a loaded Phonopy with FC already attached, is_nac=False, and

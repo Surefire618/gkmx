@@ -151,7 +151,7 @@ def _is_pairwise_reduced(cell, rtol=1e-6):
 
 def _array_namespace(x):
     mod = type(x).__module__
-    if mod.startswith("jax") or mod.startswith("jaxlib"):
+    if mod.startswith(("jax", "jaxlib")):
         import jax.numpy as jnp
         return jnp
     return np

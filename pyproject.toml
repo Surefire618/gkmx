@@ -33,11 +33,14 @@ extend-select = ["W"]
 ignore = [
     "E741",  # `I`, `l`, `N` are load-bearing physics notation (supercell vs primitive index, etc.)
     "E702",  # packed `w_s = ...; w_sp = ...` assignments are idiomatic in the phonon kernels
+    "BLE001",  # allows blind `except Exception`: optional-dep probes can fail in different ways
 ]
 
 [tool.ruff.lint.per-file-ignores]
 # pytest.importorskip() + local imports is idiomatic pytest.
 "tests/**/*.py" = ["E402"]
+# `Si` is the element, not camelCase; lowercasing it would read as SI units.
+"tests/integration/test_phonopy_Si_strict.py" = ["N999"]
 
 [build-system]
 requires = ["setuptools>=64"]

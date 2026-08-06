@@ -31,8 +31,7 @@ import xarray as xr
 from gkmx import keys
 from gkmx.greenkubo import get_kappa
 
-from ._pins import (KAPPA_CORRECTED_REF, KAPPA_CORRECTED_TOL,
-                     KAPPA_RAW_REF, KAPPA_RAW_TOL)
+from ._pins import KAPPA_CORRECTED_REF, KAPPA_CORRECTED_TOL, KAPPA_RAW_REF, KAPPA_RAW_TOL
 
 DATA_DIR = Path(__file__).parent.parent / "datasets" / "KI_B2_MLIP"
 

@@ -21,14 +21,14 @@ from . import _constants as C
 from . import keys
 from ._backend import get_backend
 from ._log import Timer, talk, warn
+from ._resources import mode_block_peak_gb
 from .brillouin import get_symmetrized_array
 from .dynamical_matrix import DynamicalMatrix
-from .kappa import get_kappa_BTE, qhgk_tau_eff
 from .interpolation import get_interpolation_data
 from .io import parse_force_constants
+from .kappa import get_kappa_BTE, qhgk_tau_eff
 from .mic import fold as mic_fold
 from .mic import is_orthogonal
-from ._resources import mode_block_peak_gb
 from .precision import Precision
 from .trajectory import gk_prefactor
 
@@ -74,14 +74,14 @@ def check_disp_magnitudes(disp, cell, *, fraction_of_safe=0.5):
     norms = np.linalg.norm(disp, axis=-1)  # (..., Na)
     max_per_frame = norms.reshape(norms.shape[0], -1).max(axis=-1)
     Nt = len(max_per_frame)
-    stats = dict(
-        Nt=Nt, half_L_min=half_L_min,
-        mean=float(np.mean(max_per_frame)),
-        median=float(np.median(max_per_frame)),
-        p99=float(np.percentile(max_per_frame, 99)),
-        max=float(np.max(max_per_frame)),
-        ratio=float(np.max(max_per_frame) / max(half_L_min, 1e-30)),
-    )
+    stats = {
+        "Nt": Nt, "half_L_min": half_L_min,
+        "mean": float(np.mean(max_per_frame)),
+        "median": float(np.median(max_per_frame)),
+        "p99": float(np.percentile(max_per_frame, 99)),
+        "max": float(np.max(max_per_frame)),
+        "ratio": float(np.max(max_per_frame) / max(half_L_min, 1e-30)),
+    }
     _talk(f"disp diagnostic: Nt={Nt}, max|disp|={stats['max']:.3f} Å, "
           f"L_min/2={half_L_min:.3f} Å, ratio={stats['ratio']:.3g} "
           f"(mean={stats['mean']:.3f}, median={stats['median']:.3f}, "
@@ -206,7 +206,7 @@ def _savgol_filter(array, window_fs=None, window=None, antisymmetric=False, poly
     """Savitzky-Golay filter along the time axis."""
     if window_fs is not None:
         times = array[keys.time]
-        window = int(len(times[times < window_fs]))
+        window = len(times[times < window_fs])
     if window is None:
         raise ValueError("Either window_fs or window must be specified")
     window = window // 2 * 2 + 1  # savgol needs odd length

@@ -15,7 +15,6 @@ from gkmx.greenkubo import get_kappa
 
 from ._helpers import rel_max
 
-
 REL_TOL = 1e-6
 
 
