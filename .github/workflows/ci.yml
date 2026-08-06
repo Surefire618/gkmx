@@ -16,6 +16,7 @@ env:
   # every test and the oversubscription costs more than it buys.
   OMP_NUM_THREADS: "2"
   OPENBLAS_NUM_THREADS: "2"
+  GKMX_PHONOPY_TEST_DIR: ${{ github.workspace }}/_phonopy/test
 
 jobs:
   lint:
@@ -44,13 +45,24 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       # phonopy is test-only: test_phonopy_Si_strict.py importorskips it and
-      # runs phonopy.load() in process. Without it those 9 tests skip silently.
+      # calls phonopy.load().
       - run: pip install -e ".[dev,jax]" phonopy
 
-      # Guard against a phonopy that installs but does not import — the failure
-      # would otherwise show up as a green run with 9 tests quietly skipped.
-      - name: optional test deps are importable
-        run: python -c "import phonopy, jax; print(phonopy.__version__, jax.__version__)"
+      # The strict Si test asserts machine-precision agreement, so the reader
+      # (pip) and the fixture (checkout) must be the same release -- take the
+      # tag from whatever pip resolved rather than pinning either side.
+      - name: match the phonopy source tag to the installed version
+        run: echo "PHONOPY_REF=v$(python -c 'import phonopy; print(phonopy.__version__)')" >> "$GITHUB_ENV"
+
+      # The package ships no test/ directory; the Si yaml lives only in the
+      # source tree. It is required by the tests.
+      - name: fetch phonopy test fixtures
+        uses: actions/checkout@v4
+        with:
+          repository: phonopy/phonopy
+          ref: ${{ env.PHONOPY_REF }}
+          path: _phonopy
+          sparse-checkout: test
 
       # -rs lists skip reasons, so a silently-skipped suite is visible in the log.
       - run: pytest -q -rs --durations=10
