@@ -13,9 +13,8 @@ import pytest
 
 from gkmx.greenkubo import get_kappa
 
+from .._tolerances import TOL_DEGENERATE_BASIS, TOL_NUMPY_VS_JAX
 from ._helpers import rel_max
-
-REL_TOL = 1e-4   # XLA reduction order ≠ OpenBLAS; few-ULP drift remains
 
 
 @pytest.fixture(scope="module")
@@ -33,25 +32,37 @@ def ds_per_backend(tiny_trajectory, tiny_fc_file):
 
 def test_numpy_and_jax_agree_on_kappa_sigma_and_full_tensor(ds_per_backend):
     """Every user-facing scalar (κ_raw, κ_corrected, σ) and the full κ
-    tensor must agree between numpy and jax to a few×1e-5. A divergence
-    here is a regression in the jax branch of ``compute_cv_tau`` or
-    ``_harmonic_force_residuals``."""
+    tensor must agree between numpy and jax. A divergence here is a
+    regression in the jax branch of ``compute_cv_tau`` or
+    ``_harmonic_force_residuals``.
+
+    κ_raw and σ are held to the rounding floor: they do not read the
+    degenerate eigenvectors, and numpy/jax agree on κ_raw exactly. κ_corrected
+    rides the QHGK channel and inherits whichever basis `eigh` picked inside a
+    degenerate multiplet, which is a physical arbitrariness rather than a
+    numerical one -- hence the far wider band. See tests/_tolerances.py.
+    """
     n, j = ds_per_backend["numpy"], ds_per_backend["jax"]
 
-    for name, getter in [
+    for name, getter, tol in [
         ("kappa_raw",
-         lambda d: np.diag(d["thermal_conductivity"].data).mean()),
-        ("kappa_corrected",
-         lambda d: np.diag(d["thermal_conductivity_corrected"].data).mean()),
+         lambda d: np.diag(d["thermal_conductivity"].data).mean(),
+         TOL_NUMPY_VS_JAX),
         ("sigma",
-         lambda d: float(d.attrs["sigma"])),
+         lambda d: float(d.attrs["sigma"]),
+         TOL_NUMPY_VS_JAX),
+        ("kappa_corrected",
+         lambda d: np.diag(d["thermal_conductivity_corrected"].data).mean(),
+         TOL_DEGENERATE_BASIS),
     ]:
         a, b = getter(n), getter(j)
         rel = rel_max(a, b)
-        assert rel < REL_TOL, f"{name}: numpy={a:.6f} jax={b:.6f} rel={rel:.2e}"
+        assert rel < tol, (
+            f"{name}: numpy={a:.6f} jax={b:.6f} rel={rel:.2e} (tol {tol:.0e})")
 
     # Full tensor agreement catches axis-mixing bugs the diagonal scalars
-    # would average out.
+    # would average out. Same channel as κ_corrected, so the same band.
     a = np.asarray(n["thermal_conductivity_corrected"].data)
     b = np.asarray(j["thermal_conductivity_corrected"].data)
-    assert np.allclose(a, b, rtol=REL_TOL, atol=1e-5 * np.abs(a).max())
+    assert np.allclose(a, b, rtol=TOL_DEGENERATE_BASIS,
+                       atol=1e-5 * np.abs(a).max())

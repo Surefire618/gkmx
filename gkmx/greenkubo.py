@@ -29,6 +29,7 @@ from .io import parse_force_constants
 from .kappa import get_kappa_BTE, qhgk_tau_eff
 from .mic import fold as mic_fold
 from .mic import is_orthogonal
+from .phonon import degenerate_sets
 from .precision import Precision
 from .trajectory import gk_prefactor
 
@@ -481,10 +482,34 @@ def compute_cv_tau(dataset, dmx, stride=1, t_chunk=5000, mode_block=None,
     # In-place mask (not np.where) to avoid fp64 upcast of tau_qs.
     tau_qs[np.asarray(dmx.w_qs) < 1e-6] = np.nan
 
+    _average_over_multiplets(cv_qs, tau_qs, np.asarray(dmx.w_qs))
+
     return (
         xr.DataArray(cv_qs, dims=keys.q_s, name=keys.mode_heat_capacity),
         xr.DataArray(tau_qs, dims=keys.q_s, name=keys.mode_lifetime),
     )
+
+
+def _average_over_multiplets(cv_qs, tau_qs, w_qs):
+    """Average cv and the linewidth 1/tau over degenerate modes, in place.
+
+    Follows phonopy's `degenerate_sets` and phono3py's
+    `imag_self_energy.py::average_by_degeneracy`, which averages the imaginary
+    self-energy: gamma is what enters linearly and has the invariant subspace sum.
+    """
+    for qi, start, stop in degenerate_sets(np.abs(np.asarray(w_qs))):
+        G = slice(start, stop)
+        cv_blk, tau_blk = cv_qs[qi, G], tau_qs[qi, G]
+
+        ok = np.isfinite(cv_blk)
+        if ok.any():
+            cv_qs[qi, G] = np.where(ok, cv_blk[ok].mean(), cv_blk)
+
+        # A failed fit carries no linewidth to contribute; averaging over the
+        # survivors keeps one bad mode from poisoning its partners.
+        ok = np.isfinite(tau_blk) & (tau_blk > 0)
+        if ok.any():
+            tau_qs[qi, G] = np.where(ok, 1.0 / np.mean(1.0 / tau_blk[ok]), tau_blk)
 
 
 def _harmonic_force_residuals(disp, forces, fc_remapped, backend="numpy",
@@ -628,7 +653,8 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
               factorization="wick", analytical=False,
               lifetime_fit_cutoff=0.5,
               correct_finite_time=True,
-              enforce_translational_invariance=True):
+              enforce_translational_invariance=True,
+              degeneracy="phonopy"):
     """Run the full Green-Kubo thermal-conductivity pipeline on an MD trajectory.
 
     The pipeline:
@@ -784,6 +810,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
             force_constants=np.asarray(fc), primitive=primitive, supercell=supercell,
             with_group_velocity_matrices=True, backend=backend, precision=p.name,
             enforce_translational_invariance=enforce_translational_invariance,
+            degeneracy=degeneracy,
         )
         if dmx_path:
             _talk(f"Saving DynamicalMatrix to {dmx_path}")
@@ -797,6 +824,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
             force_constants=fc, primitive=primitive, supercell=supercell,
             with_group_velocity_matrices=True, backend=backend, precision=p.name,
             enforce_translational_invariance=enforce_translational_invariance,
+            degeneracy=degeneracy,
         )
         if dmx_path:
             _talk(f"Saving DynamicalMatrix to {dmx_path}")

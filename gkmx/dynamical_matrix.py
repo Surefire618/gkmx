@@ -150,7 +150,8 @@ class DynamicalMatrix:
 
     def __init__(self, force_constants, primitive, supercell,
                  with_group_velocity_matrices=False, backend="numpy",
-                 precision="fp64", enforce_translational_invariance=True):
+                 precision="fp64", enforce_translational_invariance=True,
+                 degeneracy="phonopy"):
         """Build the adapter and solve on the commensurate q-grid.
 
         Args:
@@ -187,6 +188,7 @@ class DynamicalMatrix:
         p = Precision.from_str(precision)
         self._dtype_real, self._dtype_complex = p.real, p.complex
 
+        self._degeneracy = degeneracy
         self._setup_lattice_and_grid(primitive, supercell)
 
         self._phonon = Phonon(
@@ -196,6 +198,7 @@ class DynamicalMatrix:
             backend=backend,
             precision=precision,
             enforce_translational_invariance=enforce_translational_invariance,
+            degeneracy=degeneracy,
         )
         self._solution = self._phonon.solve(
             q_points_frac=self._q_grid.points,
@@ -329,6 +332,7 @@ class DynamicalMatrix:
                 supercell=self.supercell,
                 backend=self._backend,
                 precision=self._precision,
+                degeneracy=self._degeneracy,
             )
         return self._phonon
 
@@ -478,6 +482,7 @@ class DynamicalMatrix:
         obj._fc_phonopy = np.asarray(ds[keys.fc_phonopy].data)
         obj._backend = backend
         obj._precision = precision
+        obj._degeneracy = "phonopy"
         obj._dtype_real = dtype_real
         obj._dtype_complex = dtype_complex
 

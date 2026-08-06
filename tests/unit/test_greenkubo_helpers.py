@@ -16,6 +16,7 @@ from gkmx.dynamical_matrix import DynamicalMatrix
 from gkmx.greenkubo import (
     _analytical_hfacfs,
     _autocorrelation_Nd,
+    _average_over_multiplets,
     _correlate,
     _cumtrapz,
     _fit_tau,
@@ -308,3 +309,36 @@ def test_analytical_hfacfs_drop_modes_with_no_linewidth():
     # The dead modes must be gone, not silently zero-weighted everywhere: the
     # surviving pairs still contribute, so the two runs must differ.
     assert not np.allclose(dead[2], live[2])
+
+
+def test_average_over_multiplets_uses_gamma():
+    """cv averages arithmetically, tau harmonically.
+
+    The linewidth 1/tau is what enters linearly and has the invariant subspace
+    sum, so it is the quantity phono3py averages (`average_by_degeneracy` on the
+    imaginary self-energy). Averaging tau instead lands ~50 % away on the KI
+    Gamma triple, so the two are not interchangeable.
+    """
+    w = np.array([[1.0, 1.0, 1.0, 2.0]])          # one triple + one isolated mode
+    cv = np.array([[1.0, 2.0, 3.0, 9.0]])
+    tau = np.array([[100.0, 200.0, 400.0, 50.0]])
+    _average_over_multiplets(cv, tau, w)
+
+    assert cv[0, :3] == pytest.approx(2.0)                    # arithmetic
+    assert tau[0, :3] == pytest.approx(3 / (1/100 + 1/200 + 1/400))   # harmonic
+    assert tau[0, :3] != pytest.approx(700 / 3)               # not the mean of tau
+    assert (cv[0, 3], tau[0, 3]) == (9.0, 50.0)               # isolated mode untouched
+
+
+def test_average_over_multiplets_skips_failed_fits():
+    """A mode whose fit failed carries no linewidth, so it must not drag its
+    partners: the average runs over the survivors and leaves the failure NaN."""
+    w = np.array([[1.0, 1.0, 1.0]])
+    cv = np.array([[1.0, 3.0, np.nan]])
+    tau = np.array([[100.0, np.nan, 0.0]])
+    _average_over_multiplets(cv, tau, w)
+
+    assert cv[0, :2] == pytest.approx(2.0)
+    assert np.isnan(cv[0, 2])
+    assert tau[0, 0] == pytest.approx(100.0)   # sole survivor
+    assert np.isnan(tau[0, 1]) and tau[0, 2] == 0.0

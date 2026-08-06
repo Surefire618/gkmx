@@ -207,33 +207,51 @@ def _symmetrize_v_site(v_qsa, q_frac, rots_frac, recip_lattice, tol=1e-5):
 _PERTURB_PROBE = np.array([1.0, 2.0, 3.0]) / np.sqrt(14.0)
 
 
+DEGENERACY_TOL = 1e-4 / C.omega_to_THz   # matches phonopy degenerate_sets cutoff
+
+# How a degenerate subspace fixes its group velocities.
+#   "phonopy" -- rotate the basis so dD/dq . probe is diagonal, keep per-mode v
+#                distinct (phonopy group_velocity.py::_rot_eigsets).
+#   "tdep"    -- no rotation; every mode of the multiplet takes the subspace
+#                mean sum(eigenvalues)/mb of dD/dq_a, invariant by construction
+#                (type_forceconstant_secondorder_dynamicalmatrix.f90:353).
+DEGENERACY_CONVENTIONS = ("phonopy", "tdep")
+
+
+def degenerate_sets(w_qs, tol=DEGENERACY_TOL):
+    """Yield ``(q, start, stop)`` mode ranges holding 2+ degenerate modes.
+
+    Frequencies must be ascending within each q, as eigh returns them. Shared
+    by the basis rotation and by the multiplet averaging in greenkubo so the
+    two cannot disagree about what counts as degenerate.
+    """
+    w = np.abs(np.asarray(w_qs))
+    Nq, Ns = w.shape
+    for qi in range(Nq):
+        start = 0
+        for si in range(1, Ns + 1):
+            if si == Ns or abs(w[qi, si] - w[qi, start]) > tol:
+                if si - start > 1:
+                    yield qi, start, si
+                start = si
+
+
 def _rotate_degenerate_subspaces(w2, e, M, probe=_PERTURB_PROBE):
     """Rotate eigh's arbitrary degenerate basis to phonopy's _perturb_D convention."""
-    Nq, _, Ns, _ = M.shape
-    w_abs = np.sqrt(np.abs(w2))
-    tol = 1e-4 / C.omega_to_THz  # matches phonopy degenerate_sets cutoff
-
     e = np.array(e, copy=True)
     M = np.array(M, copy=True)
 
-    for qi in range(Nq):
-        w_q = w_abs[qi]
-        start = 0
-        for si in range(1, Ns + 1):
-            if si == Ns or abs(w_q[si] - w_q[start]) > tol:
-                n_deg = si - start
-                if n_deg > 1:
-                    G = slice(start, si)
-                    M_probe = (probe[0] * M[qi, 0, G, G]
-                               + probe[1] * M[qi, 1, G, G]
-                               + probe[2] * M[qi, 2, G, G])
-                    M_probe = 0.5 * (M_probe + M_probe.conj().T)
-                    _, U = np.linalg.eigh(M_probe)
-                    e[qi, G, :] = U.T @ e[qi, G, :]
-                    for a in range(3):
-                        M[qi, a, G, :] = U.conj().T @ M[qi, a, G, :]
-                        M[qi, a, :, G] = M[qi, a, :, G] @ U
-                start = si
+    for qi, start, stop in degenerate_sets(np.sqrt(np.abs(w2))):
+        G = slice(start, stop)
+        M_probe = (probe[0] * M[qi, 0, G, G]
+                   + probe[1] * M[qi, 1, G, G]
+                   + probe[2] * M[qi, 2, G, G])
+        M_probe = 0.5 * (M_probe + M_probe.conj().T)
+        _, U = np.linalg.eigh(M_probe)
+        e[qi, G, :] = U.T @ e[qi, G, :]
+        for a in range(3):
+            M[qi, a, G, :] = U.conj().T @ M[qi, a, G, :]
+            M[qi, a, :, G] = M[qi, a, :, G] @ U
     return e, M
 
 
@@ -250,7 +268,7 @@ class Phonon:
 
     def __init__(self, force_constants, primitive, supercell,
                  backend="numpy", precision="fp64", p2s_map=None, factor=1.0,
-                 enforce_translational_invariance=True):
+                 enforce_translational_invariance=True, degeneracy="phonopy"):
         """Build the solver.
 
         Args:
@@ -293,10 +311,21 @@ class Phonon:
             primitive = primitive.copy()
             primitive.positions = np.asarray(supercell.positions)[p2s_map]
 
+        if degeneracy not in DEGENERACY_CONVENTIONS:
+            raise ValueError(
+                f"degeneracy must be one of {DEGENERACY_CONVENTIONS}, got {degeneracy!r}")
+        if degeneracy == "tdep":
+            raise NotImplementedError(
+                "degeneracy='tdep' is reserved but not built: it needs the subspace-mean "
+                "velocity (sum(eigenvalues)/mb of dD/dq_a per Cartesian direction, "
+                "eigenvectors left unrotated) in place of the probe rotation. "
+                "Use degeneracy='phonopy'.")
+
         self.primitive = primitive
         self.supercell = supercell
         self.backend = backend
         self.precision = precision
+        self.degeneracy = degeneracy
         self._dtype_real = dtype_real
         self._dtype_complex = dtype_complex
 

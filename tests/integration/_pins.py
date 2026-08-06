@@ -35,24 +35,17 @@ KAPPA_RAW_REF = 0.117222
 KAPPA_RAW_TOL = 1e-3
 
 # Cubic average of `thermal_conductivity_corrected` (size-extrapolated), W/mK.
-#
-# 0.367793 -> 0.443956 (2026-08-04): sum rule now enforced by default;
-# KI_B2_MLIP violates it by 6.9 % of max|Phi|, moving the Gamma acoustics off
-# zero. Bisected: enforce_translational_invariance=False reproduces
-# 0.367793173. fp64 gives 0.444028414, fp32 0.443955690.
-#
-# 0.367602 -> 0.367793 (2026-08-03): qhgk_tau_eff converts w to rad/fs via
-# _constants.omega_to_rad_fs, not the rounded literal 0.1 (1.81 % high).
-# Only the off-diagonal moves. Bisected: restoring 0.1 reproduces 0.367602. NB
-# the shift is inside the tolerance, so this pin would not have failed alone.
-KAPPA_CORRECTED_REF = 0.443956
-KAPPA_CORRECTED_TOL = 5e-3
-#
-# NB this quantity is not reproducible below ~2e-4 across precisions or
-# backends: it rides on the QHGK channel, whose v_qssa is basis-dependent
-# inside a degenerate multiplet, and tau/cv are fitted per mode so they are
-# not constant across one. Do not tighten TOL below that without first
-# averaging tau/cv over multiplets. See test_precision_switch.py.
+# Rides on the QHGK channel, and is not reproducible below ~1e-4 across
+# precisions or backends: rotating a degenerate multiplet mixes the mode
+# amplitudes tau and cv are fitted on, so their values follow whichever basis
+# eigh returned. Averaging over multiplets suppresses that but cannot remove it
+# -- tau is a nonlinear fit and cv a 4th-order moment, so neither has an
+# invariant multiplet mean. REF is the midpoint of the fp32/fp64 x numpy/jax
+# spread (0.443910 to 0.443953) so no configuration sits at the edge of the
+# band. Tightening TOL needs the fit taken on the invariant trace of g.
+# See test_degenerate_basis.py and test_precision_switch.py.
+KAPPA_CORRECTED_REF = 0.443931
+KAPPA_CORRECTED_TOL = 1e-4
 
 # Anharmonicity score: std(f_DFT − f_harmonic) / std(f_DFT).
 SIGMA_REF = 0.409901

@@ -11,7 +11,7 @@ from ase import io as ase_io
 
 from gkmx.io import parse_force_constants
 from gkmx.lattice_points import get_commensurate_q_points
-from gkmx.phonon import Phonon, SolutionWithGVM
+from gkmx.phonon import DEGENERACY_CONVENTIONS, Phonon, SolutionWithGVM
 
 from .._tolerances import TOL_FP64
 
@@ -129,3 +129,24 @@ def test_p2s_map_is_noop_for_tdep(setup):
     sol_a = Phonon(fc, prim, sc).solve(q)
     sol_b = Phonon(fc, prim, sc, p2s_map=p2s).solve(q)
     np.testing.assert_allclose(sol_a.w_qs, sol_b.w_qs, rtol=TOL_FP64, atol=0)
+
+
+def test_degeneracy_convention_is_validated(setup):
+    """`degeneracy` selects how a degenerate subspace fixes its velocities.
+
+    "tdep" is reserved but unbuilt: it needs the subspace-mean velocity
+    (`sum(eigenvalues)/mb` of dD/dq_a, eigenvectors left unrotated) rather than
+    the probe rotation. It must fail loudly at construction rather than silently
+    fall back to the phonopy branch.
+    """
+    prim, sc, fc, _, _ = setup
+    assert set(DEGENERACY_CONVENTIONS) == {"phonopy", "tdep"}
+
+    ph = Phonon(force_constants=fc, primitive=prim, supercell=sc,
+                degeneracy="phonopy")
+    assert ph.degeneracy == "phonopy"
+
+    with pytest.raises(NotImplementedError, match="tdep"):
+        Phonon(force_constants=fc, primitive=prim, supercell=sc, degeneracy="tdep")
+    with pytest.raises(ValueError, match="degeneracy"):
+        Phonon(force_constants=fc, primitive=prim, supercell=sc, degeneracy="bogus")
