@@ -107,23 +107,41 @@ class TestEndToEndKappa:
             f"ref = {KAPPA_CORRECTED_REF} W/mK (tol {KAPPA_CORRECTED_TOL})"
         )
 
-    def test_analytical_emits_bte_and_qhgk_hfacfs(self, trajectory, fc_file):
-        """``analytical=True`` lights up the BTE / QHGK time-resolved
-        HFACFs branch in ``_analytical_hfacfs``. Pins shape + finiteness
-        on every one of the four added arrays.
-        """
-        ds = get_kappa(
-            trajectory.copy(deep=True),
-            fc_file=fc_file,
-            interpolate=False,
-            backend="numpy",
-            analytical=True,
-        )
-        Nt = ds["heat_flux_acf"].sizes[keys.time]
-        for name in ("heat_flux_BTE_acf",
-                     "heat_flux_BTE_acf_integral",
-                     "heat_flux_QHGK_acf",
-                     "heat_flux_QHGK_acf_integral"):
-            arr = np.asarray(ds[name].data)
-            assert arr.shape == (Nt, 3, 3), f"{name} has shape {arr.shape}"
-            assert np.all(np.isfinite(arr)), f"{name} contains NaN / inf"
+
+@pytest.mark.parametrize("traj_fixture,fc_fixture", [
+    ("trajectory", "fc_file"),          # KI: every mode fits a lifetime
+    ("cui_trajectory", "cui_fc_file"),  # CuI: 3 of 648 fits fail
+], ids=["KI", "CuI"])
+def test_analytical_emits_bte_and_qhgk_hfacfs(request, traj_fixture, fc_fixture):
+    """``analytical=True`` lights up the BTE / QHGK time-resolved HFACFs
+    branch in ``_analytical_hfacfs``. Pins shape + finiteness on all four
+    added arrays.
+
+    CuI is in the parametrization because it is the only in-repo fixture
+    carrying failed lifetime fits, which reach the QHGK kernel as γ = inf
+    and NaN the whole einsum — KI has none, so it cannot see that path.
+    The count is asserted below so the coverage cannot quietly vanish.
+    """
+    traj = request.getfixturevalue(traj_fixture)
+    fc = request.getfixturevalue(fc_fixture)
+    ds = get_kappa(
+        traj.copy(deep=True),
+        fc_file=fc,
+        interpolate=False,
+        backend="numpy",
+        analytical=True,
+    )
+    Nt = ds["heat_flux_acf"].sizes[keys.time]
+    for name in ("heat_flux_BTE_acf",
+                 "heat_flux_BTE_acf_integral",
+                 "heat_flux_QHGK_acf",
+                 "heat_flux_QHGK_acf_integral"):
+        arr = np.asarray(ds[name].data)
+        assert arr.shape == (Nt, 3, 3), f"{name} has shape {arr.shape}"
+        assert np.all(np.isfinite(arr)), f"{name} contains NaN / inf"
+
+    n_failed = int(np.isnan(np.asarray(ds[keys.mode_lifetime].data)).sum())
+    if traj_fixture.startswith("cui"):
+        assert n_failed > 0, (
+            "CuI no longer carries failed lifetime fits; the finiteness "
+            "assertion above no longer covers the γ = inf path")
