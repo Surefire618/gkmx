@@ -11,7 +11,12 @@ from ase import io as ase_io
 
 from gkmx.io import parse_force_constants
 from gkmx.lattice_points import get_commensurate_q_points
-from gkmx.phonon import DEGENERACY_CONVENTIONS, Phonon, SolutionWithGVM
+from gkmx.phonon import (
+    DEGENERACY_CONVENTIONS,
+    Phonon,
+    SolutionWithGVM,
+    degenerate_sets,
+)
 
 from .._tolerances import TOL_FP64
 
@@ -132,21 +137,42 @@ def test_p2s_map_is_noop_for_tdep(setup):
 
 
 def test_degeneracy_convention_is_validated(setup):
-    """`degeneracy` selects how a degenerate subspace fixes its velocities.
-
-    "tdep" is reserved but unbuilt: it needs the subspace-mean velocity
-    (`sum(eigenvalues)/mb` of dD/dq_a, eigenvectors left unrotated) rather than
-    the probe rotation. It must fail loudly at construction rather than silently
-    fall back to the phonopy branch.
-    """
+    """`degeneracy` selects how a degenerate subspace fixes its group velocities:
+    "phonopy" rotates the basis to diagonalise dD/dq . probe, "tdep" leaves the
+    basis alone and gives every member the subspace mean."""
     prim, sc, fc, _, _ = setup
     assert set(DEGENERACY_CONVENTIONS) == {"phonopy", "tdep"}
 
-    ph = Phonon(force_constants=fc, primitive=prim, supercell=sc,
-                degeneracy="phonopy")
-    assert ph.degeneracy == "phonopy"
+    for convention in DEGENERACY_CONVENTIONS:
+        ph = Phonon(force_constants=fc, primitive=prim, supercell=sc,
+                    degeneracy=convention)
+        assert ph.degeneracy == convention
 
-    with pytest.raises(NotImplementedError, match="tdep"):
-        Phonon(force_constants=fc, primitive=prim, supercell=sc, degeneracy="tdep")
     with pytest.raises(ValueError, match="degeneracy"):
         Phonon(force_constants=fc, primitive=prim, supercell=sc, degeneracy="bogus")
+
+
+def test_tdep_degeneracy_gives_one_velocity_per_multiplet(setup):
+    """TDEP assigns the subspace mean, so a multiplet carries a single velocity.
+
+    That mean is a trace, hence basis-independent -- which is the whole point of
+    the convention, and what "phonopy" trades away to keep members distinct.
+    """
+    prim, sc, fc, q, _ = setup
+    sol = {c: Phonon(force_constants=fc, primitive=prim, supercell=sc,
+                     degeneracy=c).solve(q, with_velocities=True)
+           for c in DEGENERACY_CONVENTIONS}
+
+    w = np.abs(np.asarray(sol["tdep"].w_qs))
+    blocks = list(degenerate_sets(w))
+    assert blocks, "fixture has no degenerate multiplets; this test is vacuous"
+
+    v_tdep = np.asarray(sol["tdep"].v_qsa_cartesian)
+    for qi, start, stop in blocks:
+        blk = v_tdep[qi, start:stop]
+        assert np.allclose(blk, blk[0], atol=1e-12), (
+            f"tdep left different velocities in the multiplet at q={qi}: {blk}")
+
+    # Frequencies do not read the velocity treatment, so the two must agree.
+    np.testing.assert_allclose(np.asarray(sol["tdep"].w_qs),
+                               np.asarray(sol["phonopy"].w_qs), atol=TOL_FP64)

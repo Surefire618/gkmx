@@ -79,7 +79,51 @@ Adds one field on top of ``Solution``:
 
 def _solve_kernel(xp, eigh_fn, fc_mw, j_of_k, svec_frac, multi_mask,
                   q_frac, pcell_cart, N_p, dtype_complex):
-    """Build D(q) under smallest-vectors Bloch and diagonalize; returns (w2, e, M, D_q)."""
+    """Dynamical matrix on a q-grid, its q-derivative, and both in the mode basis.
+
+    D(q) uses the smallest-vectors Bloch convention: the phase of a pair is
+    averaged over its ``N_iK`` equidistant periodic images rather than taken
+    from one lattice point (`lattice_points.get_smallest_vectors`), which is
+    what matches phonopy on non-primitive supercells --
+
+        D_{ia,jb}(q) = sum_{K in j}  Phi_{iK}^{ab} / sqrt(m_i m_K)
+                       * (1/N_iK) sum_v exp(2 pi i q . s_iKv)
+
+    diagonalized as ``D e_s = w_s^2 e_s``. Differentiating the same phase gives
+    the velocity operator; ``s`` enters Cartesian there, so the 2 pi of the
+    2pi-free reciprocal lattice survives and later cancels the 1/2pi in
+    ``gv_to_AA_fs``:
+
+        dD/dq_a = sum_K Phi~ (1/N_iK) sum_v  2 pi i s_v^a exp(2 pi i q . s_v)
+        M_a     = e^dag (dD/dq_a) e
+
+    Args:
+        xp: array namespace, ``numpy`` or ``jax.numpy``.
+        eigh_fn: Hermitian eigensolver from that namespace.
+        fc_mw: mass-weighted force constants ``Phi_iK / sqrt(m_i m_K)``,
+            ``(N_p, N_sc, 3, 3)``, eV/(A^2 amu).
+        j_of_k: primitive-cell index of each supercell atom, ``(N_sc,)``.
+        svec_frac: smallest vectors from primitive atom i to supercell atom K,
+            fractional in the primitive cell, ``(N_sc, N_p, max_multi, 3)``.
+        multi_mask: which of the ``max_multi`` slots hold a real image,
+            ``(N_sc, N_p, max_multi)``. 30-58 % of pairs in cubic cells have
+            more than one; using only the interior lattice point is wrong.
+        q_frac: q-points, fractional reciprocal coordinates, 2pi-free, ``(Nq, 3)``.
+        pcell_cart: primitive lattice vectors as rows [A]; converts ``svec_frac``
+            to Cartesian for the derivative.
+        N_p: atoms in the primitive cell, so ``Ns = 3 N_p`` modes per q.
+        dtype_complex: complex dtype carried from the precision switch.
+
+    Returns:
+        w2: ``(Nq, Ns)`` eigenvalues ``w^2`` in ASE units; negative marks a soft
+            mode, so the caller takes ``sign(w2) sqrt(|w2|)``.
+        e: ``(Nq, Ns, Ns)`` row eigenvectors -- ``e[q, s]`` is the polarization
+            of mode s in the mass-weighted primitive basis.
+        M: ``(Nq, 3, Ns, Ns)`` velocity operator in the mode basis. Its diagonal
+            gives the group velocity, ``v_s^a = Re M[q,a,s,s] / (2 w_s)``; the
+            off-diagonal is the QHGK coherence velocity between modes s and s'.
+        D_q: ``(Nq, Ns, Ns)`` the dynamical matrix itself, Hermitized.
+    """
     two_pi_j = xp.asarray(2j * np.pi, dtype=dtype_complex)
 
     phase_all = xp.exp(
@@ -239,6 +283,29 @@ def degenerate_sets(w_qs, tol=DEGENERACY_TOL):
                 start = si
 
 
+def _average_degenerate_subspaces(w2, e, M):
+    """TDEP's treatment: give every mode of a multiplet the subspace-mean velocity.
+
+    `dD/dq_a` restricted to the multiplet is diagonalised and all members take
+    the mean of its eigenvalues -- which is `trace / mb`, so the diagonalisation
+    TDEP performs is not needed. The eigenvectors are left alone: TDEP never
+    writes a rotated basis back (`type_forceconstant_secondorder_dynamicalmatrix
+    .f90:353`, where the zheev output is deallocated unread, and could not be
+    written back anyway since each Cartesian direction gives a different one).
+
+    Basis-independent by construction, since a trace is. The cost is that modes
+    with genuinely different velocities inside one multiplet are flattened to
+    their mean, which the "phonopy" convention keeps distinct.
+    """
+    M = np.array(M, copy=True)
+    for qi, start, stop in degenerate_sets(np.sqrt(np.abs(w2))):
+        idx = np.arange(start, stop)
+        G = slice(start, stop)
+        for a in range(3):
+            M[qi, a, idx, idx] = np.trace(M[qi, a, G, G]) / (stop - start)
+    return e, M
+
+
 def _rotate_degenerate_subspaces(w2, e, M, probe=_PERTURB_PROBE):
     """Rotate eigh's arbitrary degenerate basis to phonopy's _perturb_D convention."""
     e = np.array(e, copy=True)
@@ -317,13 +384,6 @@ class Phonon:
         if degeneracy not in DEGENERACY_CONVENTIONS:
             raise ValueError(
                 f"degeneracy must be one of {DEGENERACY_CONVENTIONS}, got {degeneracy!r}")
-        if degeneracy == "tdep":
-            raise NotImplementedError(
-                "degeneracy='tdep' is reserved but not built: it needs the subspace-mean "
-                "velocity (sum(eigenvalues)/mb of dD/dq_a per Cartesian direction, "
-                "eigenvectors left unrotated) in place of the probe rotation. "
-                "Use degeneracy='phonopy'.")
-
         self.primitive = primitive
         self.supercell = supercell
         self.backend = backend
@@ -416,9 +476,12 @@ class Phonon:
 
     def _build_solution(self, w2, e, M, D_q, q_frac, *,
                         with_velocities, with_group_velocity_matrices):
-        # Pin a canonical basis inside each degenerate subspace before
-        # extracting per-mode velocities; see memory/project_dDdq_boundary_bug.md.
-        e, M = _rotate_degenerate_subspaces(w2, e, M)
+        # Fix the degenerate subspaces before extracting per-mode velocities;
+        # see memory/project_dDdq_boundary_bug.md.
+        if self.degeneracy == "tdep":
+            e, M = _average_degenerate_subspaces(w2, e, M)
+        else:
+            e, M = _rotate_degenerate_subspaces(w2, e, M)
 
         w_qs = np.sign(w2) * np.sqrt(np.abs(w2))
 
