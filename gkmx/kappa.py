@@ -8,7 +8,23 @@ from . import keys
 
 
 def get_kappa_BTE(v_qsa, tau_qs, cv_qs=None, weights=None, scalar=False):
-    """BTE thermal conductivity ``kappa_ab = sum_qs cv * tau * v_a * v_b``."""
+    """BTE thermal conductivity ``kappa_ab = sum_qs cv * tau * v_a * v_b``.
+
+    The particle-like channel: every mode carries heat on its own, so only the
+    diagonal group velocity enters and coherence between modes is absent.
+
+    Args:
+        v_qsa: ``(Nq, Ns, 3)`` diagonal group velocity [A/fs].
+        tau_qs: ``(Nq, Ns)`` mode lifetimes [fs]. NaN marks a failed fit and
+            drops out of the sum.
+        cv_qs: ``(Nq, Ns)`` mode heat capacities [eV/(K A^3)]; ``None`` leaves
+            kappa unweighted, i.e. the bare ``v^2 tau`` sum.
+        weights: per-q integration weights; ``None`` weights every q equally.
+        scalar: return the cubic average ``Tr(kappa)/3`` instead of the tensor.
+
+    Returns:
+        ``(3, 3)`` tensor in W/(m K), or a scalar when ``scalar=True``.
+    """
     if weights is None:
         weights = 1.0
     if cv_qs is None:
@@ -35,6 +51,18 @@ def qhgk_tau_eff(w_qs, w_inv_qs, tau_qs, tol=1e-4):
     Quasi-harmonic Green-Kubo coherence kernel of Isaeva, Barbalinardo, Donadio and
     Baroni, Nat. Commun. 10, 3853 (2019), retaining the antiresonant ``(w_s + w_sp)``
     term.
+
+    Args:
+        w_qs: ``(Nq, Ns)`` frequencies in gkmx units; converted to rad/fs here
+            so the Lorentzian mixes frequencies and linewidths in one unit.
+        w_inv_qs: ``(Nq, Ns)`` ``1/w``, converted alongside.
+        tau_qs: ``(Nq, Ns)`` mode lifetimes [fs]; NaN is treated as zero.
+        tol: frequencies below this (rad/fs) are zeroed, masking the Gamma
+            acoustics out of the pair sum.
+
+    Returns:
+        ``(Nq, Ns, Ns)`` effective lifetime [fs]. On ``s == s'`` the pair weight
+        is 1 and the beat frequency 0, so it reduces to ``tau_s``.
     """
     w = np.asarray(w_qs).copy() * C.omega_to_rad_fs
     wi = np.asarray(w_inv_qs).copy() / C.omega_to_rad_fs
@@ -56,7 +84,30 @@ def qhgk_tau_eff(w_qs, w_inv_qs, tau_qs, tol=1e-4):
 
 def get_kappa_QHGK(v_qssa, tau_qs, w_qs, w_inv_qs, cv_qs=None, weights=None,
                     scalar=False, tol=1e-4):
-    """QHGK thermal conductivity
+    """QHGK thermal conductivity: the coherence channel.
+
+    Two modes ``s != s'`` carry heat together when their linewidths overlap
+    their frequency splitting, which the Lorentzian in ``qhgk_tau_eff``
+    measures. This is what the BTE leaves out, and it matters where modes are
+    dense and short-lived.
+
+    Args:
+        v_qssa: ``(Nq, Ns, Ns, 3)`` velocity operator [A/fs]. Its diagonal is
+            the group velocity, so the ``s == s'`` terms reproduce the BTE.
+        tau_qs: ``(Nq, Ns)`` mode lifetimes [fs].
+        w_qs: ``(Nq, Ns)`` frequencies in gkmx units (no 2pi).
+        w_inv_qs: ``(Nq, Ns)`` ``1/w`` with the near-zero modes already zeroed.
+            Take it from the solver rather than recomputing: the cutoff is set
+            from order statistics over the whole q batch, so a locally chosen
+            threshold silently disagrees whenever the batch differs.
+        cv_qs: ``(Nq, Ns)`` mode heat capacities [eV/(K A^3)].
+        weights: per-q integration weights; ``None`` weights every q equally.
+        scalar: return ``Tr(kappa)/3`` instead of the tensor.
+        tol: frequencies below this count as zero, masking the Gamma acoustics
+            out of the pair sum.
+
+    Returns:
+        ``(3, 3)`` tensor in W/(m K), or a scalar when ``scalar=True``.
     """
     if weights is None:
         weights = 1.0

@@ -25,6 +25,21 @@ def translational_invariance(fc, primitive, supercell,
     Enforced by removing the residual from the origin block:
 
         Phi[i][I(i, R=0)] -= sum_B Phi[i][B]
+
+    Removing it there leaves the pair terms untouched and enters D(q) with phase
+    1 at every q, so it repairs Gamma exactly and nothing else -- degeneracies
+    away from Gamma need a space-group average.
+
+    Args:
+        fc: ``(N_p, N_sc, 3, 3)`` force constants, not mass-weighted.
+        primitive: ASE Atoms, the primitive cell.
+        supercell: ASE Atoms; together they locate the origin block ``I(i, R=0)``.
+        asr_tol: warn when the residual exceeds this fraction of ``max|Phi|``.
+        tol: position tolerance for the origin-block lookup.
+
+    Returns:
+        ``(fc, rel_residual)`` -- corrected force constants, and the residual
+        that was removed as a fraction of ``max|Phi|``.
     """
     fc = np.asarray(fc)
     residual = fc.sum(axis=1)
@@ -484,6 +499,13 @@ class Phonon:
             factor: scalar rescaling for non-eV/Å² FCs. Default 1.0
                 (FHI-aims / phonopy convention). For QE Ry/bohr² FCs use
                 ``(108.97 / 15.633)**2 ≈ 48.59``.
+            enforce_translational_invariance: impose the acoustic sum rule
+                ``sum_B Phi[i][B] = 0`` by removing the residual from the
+                origin block. Default ``True``; warns when the residual is a
+                large fraction of ``max|Phi|``. Turning it off keeps the force
+                constants exactly as supplied, at the cost of Gamma acoustics
+                that do not sit at zero and a ``1/w`` that leaks into every
+                ``1/w``-weighted mode sum.
             symmetry_method: ``"PHONOPY"`` (default) or ``"TDEP"`` -- the whole
                 symmetry convention, not one knob. PHONOPY rotates a degenerate
                 subspace so ``dD/dq . probe`` is diagonal and averages the

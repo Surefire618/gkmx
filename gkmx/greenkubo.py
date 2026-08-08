@@ -246,6 +246,29 @@ def compute_cv_tau(dataset, dmx, stride=1, t_chunk=5000, mode_block=None,
     triangle) — see memory/feedback_physics_first_then_perf.md.
 
     Args:
+        dataset: trajectory ``xr.Dataset`` carrying ``displacements`` and
+            ``velocities``. Masses come from ``dmx.supercell``, not from the
+            trajectory's own copy, so the projection cannot end up on a
+            different mass table than the force constants.
+        dmx: solved ``DynamicalMatrix`` supplying ``e_qsI``, ``w_qs`` and
+            ``w_inv_qs`` on the commensurate grid.
+        stride: keep every ``stride``-th frame. Coarsens the time axis, so it
+            raises the shortest resolvable lifetime.
+        t_chunk: frames per streaming block, for the projection only.
+            Projection, mass-weighting and the moments are linear in time and
+            chunk freely; the ACF never does -- it is one full-length FFT, and
+            chunking it is biased at every lag.
+        backend: ``"numpy"`` (default) or ``"jax"``.
+        dtype_u: dtype of the displacement / momentum buffers.
+        dtype_a: dtype of the complex mode amplitudes. Both default to the
+            precision switch.
+        hann: taper the ACF with a Hann window sized to the full trajectory.
+        normalize: ACF normalization; ``2`` is the unbiased ``1/(N - lag)``.
+        correct_finite_time: apply ``1/tau -> 1/tau - 1/T_max``. Affects
+            long-lifetime modes only.
+        lifetime_fit_cutoff: the fraction of ``g(0)`` the fit crosses to define
+            tau. Lower samples further into the tail: better for long-tau
+            modes, noisier for short-tau ones.
         factorization: ``"wick"`` (default, ``|g|^2`` fit, SMA /
             dressed-bubble per dissertation Sec. 5.4.2 +
             Fiorentino-Baroni PRB 107 054311 (2023)) or ``"vertex"``
@@ -730,6 +753,8 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
             long-tau modes, noisier for short-tau).
         correct_finite_time: apply the ``1/τ → 1/τ − 1/T_max``
             finite-time correction. Affects long-lifetime modes only.
+        enforce_translational_invariance: impose the acoustic sum rule on the
+            force constants before solving; see ``Phonon``. Default ``True``.
         symmetry_method: ``"PHONOPY"`` (default) or ``"TDEP"`` -- the symmetry
             convention used for the degenerate subspaces and for which index of
             the velocity is averaged over the little group. Moves kappa_BTE and

@@ -169,6 +169,13 @@ class DynamicalMatrix:
             precision: ``"fp64"`` (default) or ``"fp32"``. Drives the
                 dtype of the cached solution and every lazily-built
                 derived array.
+            enforce_translational_invariance: impose the acoustic sum rule
+                ``sum_B Phi[i][B] = 0`` by removing the residual from the
+                origin block. Default ``True``; warns when the residual is a
+                large fraction of ``max|Phi|``. Turning it off keeps the force
+                constants exactly as supplied, at the cost of Gamma acoustics
+                that do not sit at zero and a ``1/w`` that leaks into every
+                ``1/w``-weighted mode sum.
             symmetry_method: ``"PHONOPY"`` (default) or ``"TDEP"`` -- the whole
                 symmetry convention, not one knob. PHONOPY rotates a degenerate
                 subspace so ``dD/dq . probe`` is diagonal and averages the

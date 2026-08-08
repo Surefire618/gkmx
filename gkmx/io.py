@@ -36,7 +36,17 @@ def _parse_force_constants_hdf5(path):
 
 
 def parse_force_constants(fc_file, two_dim=False):
-    """Load FC from phonopy text / fc2.hdf5 / flat .dat; returns ``(N_p, N_sc, 3, 3)`` (or 2D when ``two_dim=True``)."""
+    """Load force constants from phonopy text, fc2.hdf5, or a flat .dat.
+
+    Args:
+        fc_file: path. The reader is chosen from the name and contents: an
+            ``hdf5``/``h5`` name reads fc2, a ``force_constants``-style name
+            reads phonopy text, anything else is parsed as a flat array.
+        two_dim: return ``(3 N_p, 3 N_sc)`` instead of ``(N_p, N_sc, 3, 3)``.
+
+    Returns:
+        Force constants in eV/A^2, not mass-weighted.
+    """
     path = Path(fc_file)
     name = path.name.lower()
 
