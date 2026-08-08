@@ -3,9 +3,12 @@
 import collections
 
 import numpy as np
+import spglib
 
 from . import _constants as C
+from . import masses as _masses
 from ._log import warn
+from .brillouin import little_group
 from .lattice_points import get_p2s_map, get_s2p_map, get_smallest_vectors
 
 ASR_TOL = 1e-4    # warn above this relative sum-rule residual
@@ -256,13 +259,22 @@ _PERTURB_PROBE = np.array([1.0, 2.0, 3.0]) / np.sqrt(14.0)
 
 DEGENERACY_TOL = 1e-4 / C.omega_to_THz   # matches phonopy degenerate_sets cutoff
 
-# How a degenerate subspace fixes its group velocities.
-#   "phonopy" -- rotate the basis so dD/dq . probe is diagonal, keep per-mode v
-#                distinct (phonopy group_velocity.py::_rot_eigsets).
-#   "tdep"    -- no rotation; every mode of the multiplet takes the subspace
-#                mean sum(eigenvalues)/mb of dD/dq_a, invariant by construction
-#                (type_forceconstant_secondorder_dynamicalmatrix.f90:353).
-DEGENERACY_CONVENTIONS = ("phonopy", "tdep")
+# Which symmetry convention the solver follows. The two codes symmetrize
+# exactly the index the other leaves alone, so each is coherent on its own terms
+# and neither is a corrected version of the other:
+#
+#                       "PHONOPY"                    "TDEP"
+#   degenerate subspace rotate so dD/dq . probe      every member takes the
+#                       is diagonal, per-mode v      subspace mean trace/mb,
+#                       kept distinct                eigenvectors unrotated
+#   diagonal v_qsa      averaged over L(q) in the    left alone
+#                       Cartesian index
+#   off-diagonal        left alone                   averaged over L(q) in the
+#   v_qssa                                           mode indices via Gamma(R,q)
+#
+# The pair is not interchangeable: each average is the identity only on the
+# index it acts on, so applying one where the other belongs over-projects.
+SYMMETRY_METHODS = ("PHONOPY", "TDEP")
 
 
 def degenerate_sets(w_qs, tol=DEGENERACY_TOL):
@@ -306,6 +318,117 @@ def _average_degenerate_subspaces(w2, e, M):
     return e, M
 
 
+def eigenvector_transformation(n, q_frac, atoms, rotations_frac, translations_frac,
+                                perm):
+    """``Gamma(R, q)``, the representation of R on the eigenvector space.
+
+        e_s(Rq) = Gamma(R, q) e_s(q)
+
+        Gamma(R, q)[a1, a2] = R_cart exp(-2 pi i q . v0),   a1 = R(a2)
+        v0 = R^-1 (r_a1 - t) - r_a2
+
+    R permutes the atoms and rotates each atom's 3x3 Cartesian block; the phase
+    carries the sublattice translation the permutation leaves over. It is
+    unitary, and for R in L(q) it commutes with D(q), so it is block-diagonal in
+    frequency -- it mixes only degenerate modes.
+
+    Args:
+        n: index into ``rotations_frac`` / ``translations_frac``.
+        q_frac: q-point, fractional reciprocal coordinates, 2pi-free.
+        atoms: primitive cell, supplying the lattice and the positions ``r_a``.
+        rotations_frac, translations_frac: space-group operations in fractional
+            coordinates, as spglib returns them.
+        perm: ``perm[a2] = R(a2)``, the atom permutation induced by ``R``.
+
+    Returns:
+        ``(3 N_p, 3 N_p)`` unitary in the atom-Cartesian basis.
+
+    The velocity operator transforms as
+
+        sum_b R_ab v^b(q) = Gamma(R, q)^dag v^a(q) Gamma(R, q)
+
+    so an average over L(q) that omits it imposes the strictly stronger, false
+    condition ``Gamma(R, q) = 1``. That is harmless on the diagonal, where
+    ``|Gamma_ss| = 1`` for a non-degenerate mode, and wrong off it.
+    """
+    A = np.asarray(atoms.cell)
+    Ainv = np.linalg.inv(A)
+    R = A.T @ rotations_frac[n] @ np.linalg.inv(A.T)
+    t = translations_frac[n] @ A
+    pos = np.asarray(atoms.positions)
+    na = len(atoms)
+
+    G = np.zeros((3 * na, 3 * na), dtype=np.complex128)
+    Rinv = np.linalg.inv(R)
+    for a2 in range(na):
+        a1 = perm[a2]
+        v0 = Rinv @ (pos[a1] - t) - pos[a2]
+        ph = np.exp(-2j * np.pi * np.dot(v0 @ Ainv, q_frac))
+        G[3 * a1:3 * a1 + 3, 3 * a2:3 * a2 + 3] = R * ph
+    return G
+
+
+def symmetrize_v_qssa(v_qssa, e_qsi, q_points_frac, atoms, symprec=1e-5):
+    """Average the velocity operator over the little group of each q.
+
+        v^a  <-  < G_R^dag v^a G_R >_{R in L(q)},    G_R = U^dag Gamma(R, q) U
+
+    This is the projector onto the L(q)-invariant part of v. By Schur
+    orthogonality it annihilates every inter-irrep block, so what survives is
+    coherence between distinct multiplets carrying the *same* irreducible
+    representation. The off-diagonal is therefore large at general q and can
+    vanish outright where the little group is big enough that no two multiplets
+    share an irrep -- exactly zero at ``|L(q)| >= 12`` on the cubic fixtures.
+    The size is not monotonic in ``|L(q)|``.
+
+    ``Gamma(R, q)`` mixes only degenerate modes, so the ``1/(2 sqrt(w_s w_s'))``
+    already folded into ``v_qssa`` commutes through and the average can act on
+    it directly.
+
+    The diagonal is not left alone: ``Gamma_ss`` is a pure phase only for a
+    non-degenerate mode, so inside a multiplet the diagonal is mixed too. This
+    is a different projector from ``_symmetrize_v_site``, which averages the
+    Cartesian index instead, and the two do not agree on the diagonal.
+
+    Args:
+        v_qssa: ``(Nq, Ns, Ns, 3)`` velocity operator.
+        e_qsi: ``(Nq, Ns, Ns)`` row eigenvectors, used to carry Gamma(R, q) into
+            the mode basis.
+        q_points_frac: ``(Nq, 3)`` q-points, fractional, 2pi-free.
+        atoms: primitive cell; its space group supplies L(q).
+        symprec: spglib symmetry tolerance.
+
+    Returns:
+        ``(Nq, Ns, Ns, 3)`` averaged velocity operator.
+    """
+    A = np.asarray(atoms.cell)
+    frac = atoms.get_scaled_positions()
+    ds = spglib.get_symmetry((A, frac, atoms.get_atomic_numbers()), symprec=symprec)
+    W, w = ds["rotations"], ds["translations"]
+
+    na = len(atoms)
+    perms = np.zeros((len(W), na), dtype=int)
+    for n in range(len(W)):
+        dd = (frac @ W[n].T + w[n])[:, None, :] - frac[None, :, :]
+        dd -= np.rint(dd)
+        perms[n] = np.argmin(np.linalg.norm(dd @ A, axis=-1), axis=1)
+        if len(set(perms[n].tolist())) != na:
+            raise ValueError(f"symmetry operation {n} does not permute the atoms")
+
+    out = np.array(v_qssa, copy=True)
+    for iq, q in enumerate(np.asarray(q_points_frac)):
+        ops = little_group(q, W, A) or [None]
+        U = np.swapaxes(np.asarray(e_qsi[iq]), -1, -2)      # columns = modes
+        acc = np.zeros_like(out[iq])
+        for n in ops:
+            if n is None:
+                acc += out[iq]
+                continue
+            G = U.conj().T @ eigenvector_transformation(n, q, atoms, W, w, perms[n]) @ U
+            acc += np.einsum("ji,jka,kl->ila", G.conj(), out[iq], G, optimize=True)
+        out[iq] = acc / len(ops)
+    return out
+
 def _rotate_degenerate_subspaces(w2, e, M, probe=_PERTURB_PROBE):
     """Rotate eigh's arbitrary degenerate basis to phonopy's _perturb_D convention."""
     e = np.array(e, copy=True)
@@ -338,7 +461,7 @@ class Phonon:
 
     def __init__(self, force_constants, primitive, supercell,
                  backend="numpy", precision="fp64", p2s_map=None, factor=1.0,
-                 enforce_translational_invariance=True, degeneracy="phonopy"):
+                 enforce_translational_invariance=True, symmetry_method="PHONOPY"):
         """Build the solver.
 
         Args:
@@ -361,6 +484,12 @@ class Phonon:
             factor: scalar rescaling for non-eV/Å² FCs. Default 1.0
                 (FHI-aims / phonopy convention). For QE Ry/bohr² FCs use
                 ``(108.97 / 15.633)**2 ≈ 48.59``.
+            symmetry_method: ``"PHONOPY"`` (default) or ``"TDEP"`` -- the whole
+                symmetry convention, not one knob. PHONOPY rotates a degenerate
+                subspace so ``dD/dq . probe`` is diagonal and averages the
+                Cartesian index of ``v_qsa``; TDEP gives every member of a
+                multiplet the subspace mean and averages the mode indices of
+                ``v_qssa``. Each leaves alone the index the other symmetrizes.
         """
         from .precision import Precision
         if backend not in ("numpy", "jax"):
@@ -381,14 +510,16 @@ class Phonon:
             primitive = primitive.copy()
             primitive.positions = np.asarray(supercell.positions)[p2s_map]
 
-        if degeneracy not in DEGENERACY_CONVENTIONS:
+        symmetry_method = str(symmetry_method).upper()
+        if symmetry_method not in SYMMETRY_METHODS:
             raise ValueError(
-                f"degeneracy must be one of {DEGENERACY_CONVENTIONS}, got {degeneracy!r}")
+                f"symmetry_method must be one of {SYMMETRY_METHODS}, "
+                f"got {symmetry_method!r}")
         self.primitive = primitive
         self.supercell = supercell
         self.backend = backend
         self.precision = precision
-        self.degeneracy = degeneracy
+        self.symmetry_method = symmetry_method
         self._dtype_real = dtype_real
         self._dtype_complex = dtype_complex
 
@@ -421,7 +552,7 @@ class Phonon:
         else:
             self.asr_residual = None
 
-        masses = np.asarray(primitive.get_masses(), dtype=self._dtype_real)
+        masses = np.asarray(_masses.of(primitive), dtype=self._dtype_real)
         fc_np = np.asarray(force_constants, dtype=self._dtype_real) * self._dtype_real(factor)
         mj = masses[j_of_k]
         mm_inv = 1.0 / np.sqrt(masses[:, None] * mj[None, :])
@@ -478,7 +609,7 @@ class Phonon:
                         with_velocities, with_group_velocity_matrices):
         # Fix the degenerate subspaces before extracting per-mode velocities;
         # see memory/project_dDdq_boundary_bug.md.
-        if self.degeneracy == "tdep":
+        if self.symmetry_method == "TDEP":
             e, M = _average_degenerate_subspaces(w2, e, M)
         else:
             e, M = _rotate_degenerate_subspaces(w2, e, M)
@@ -516,9 +647,9 @@ class Phonon:
         v_diag = np.einsum("qajj->qja", M)
         v_qsa = (v_diag.real / (2.0 * sqrt_safe[:, :, None])) * C.gv_to_AA_fs
 
-        # Average v over the little group of q (phonopy's second half).
-        recip_lat = np.linalg.inv(np.asarray(self.primitive.cell))
-        v_qsa = _symmetrize_v_site(v_qsa, q_frac, self._symm_rots_frac, recip_lat)
+        if self.symmetry_method == "PHONOPY":
+            recip_lat = np.linalg.inv(np.asarray(self.primitive.cell))
+            v_qsa = _symmetrize_v_site(v_qsa, q_frac, self._symm_rots_frac, recip_lat)
 
         # Signed (not |.|) threshold: zeros both Gamma acoustics and soft
         # modes, matching phonopy's cutoff_frequency.
@@ -537,14 +668,13 @@ class Phonon:
         M_moved = np.moveaxis(M, 1, -1)
         v_qssa = (M_moved / denom[:, :, :, None]) * C.gv_to_AA_fs
 
-        # Site-symmetrize v_qssa too; on sum-rule-violating FC this shrinks
-        # |v_qssa| where the little group is non-trivial (~10-25% lower
-        # QHGK κ vs vibes). See memory/project_qhgk_v_qssa_site_symm.md.
-        Nq_q, Ns_q, _, _ = v_qssa.shape
-        v_qssa = _symmetrize_v_site(
-            v_qssa.reshape(Nq_q, Ns_q * Ns_q, 3),
-            q_frac, self._symm_rots_frac, recip_lat,
-        ).reshape(Nq_q, Ns_q, Ns_q, 3)
+        # Under R in L(q) the velocity operator obeys
+        #     sum_b R_ab v^b = Gamma(R, q)^dag v^a Gamma(R, q)
+        # so the Cartesian average applied to v_qsa above is the diagonal case,
+        # where Gamma(R, q) is a phase and cancels. Off the diagonal it does
+        # not, and the mode-index average is the one that belongs here.
+        if self.symmetry_method == "TDEP":
+            v_qssa = symmetrize_v_qssa(v_qssa, e_qsi, q_frac, self.primitive)
 
         band_mask = v_ok[:, :, None] & v_ok[:, None, :]
         v_qssa = np.where(band_mask[:, :, :, None], v_qssa, 0.0)

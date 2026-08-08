@@ -19,6 +19,7 @@ from scipy.integrate import cumulative_trapezoid
 
 from . import _constants as C
 from . import keys
+from . import masses as _masses
 from ._backend import get_backend
 from ._log import Timer, talk, warn
 from ._resources import mode_block_peak_gb
@@ -295,7 +296,10 @@ def compute_cv_tau(dataset, dmx, stride=1, t_chunk=5000, mode_block=None,
     w_inv_m = np.asarray(dmx.w_inv_qs).reshape(nmodes).astype(dtype_u)
     w2_m = np.asarray(dmx.w2_qs).reshape(nmodes).astype(dtype_u)
 
-    m = np.asarray(dataset.masses).astype(dtype_u)
+    # One mass source for the whole pipeline: taken from the structure the
+    # force constants were weighted with, not the trajectory's own copy, so
+    # the projection cannot end up on a different table than the eigenvectors.
+    m = np.asarray(_masses.of(dmx.supercell)).astype(dtype_u)
     m_sqrt = np.sqrt(m).astype(dtype_u)
 
     # Full-trajectory ACF only — see docstring + `feedback_physics_first_then_perf.md`.
@@ -670,7 +674,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
               lifetime_fit_cutoff=0.5,
               correct_finite_time=True,
               enforce_translational_invariance=True,
-              degeneracy="phonopy"):
+              symmetry_method="PHONOPY"):
     """Run the full Green-Kubo thermal-conductivity pipeline on an MD trajectory.
 
     The pipeline:
@@ -726,6 +730,11 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
             long-tau modes, noisier for short-tau).
         correct_finite_time: apply the ``1/τ → 1/τ − 1/T_max``
             finite-time correction. Affects long-lifetime modes only.
+        symmetry_method: ``"PHONOPY"`` (default) or ``"TDEP"`` -- the symmetry
+            convention used for the degenerate subspaces and for which index of
+            the velocity is averaged over the little group. Moves kappa_BTE and
+            kappa_QHGK; leaves the raw HFACF kappa untouched, which never sees
+            symmetry.
 
     Returns:
         ``xr.Dataset`` with kappa tensor, HFACF, mode-resolved
@@ -826,7 +835,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
             force_constants=np.asarray(fc), primitive=primitive, supercell=supercell,
             with_group_velocity_matrices=True, backend=backend, precision=p.name,
             enforce_translational_invariance=enforce_translational_invariance,
-            degeneracy=degeneracy,
+            symmetry_method=symmetry_method,
         )
         if dmx_path:
             _talk(f"Saving DynamicalMatrix to {dmx_path}")
@@ -840,7 +849,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
             force_constants=fc, primitive=primitive, supercell=supercell,
             with_group_velocity_matrices=True, backend=backend, precision=p.name,
             enforce_translational_invariance=enforce_translational_invariance,
-            degeneracy=degeneracy,
+            symmetry_method=symmetry_method,
         )
         if dmx_path:
             _talk(f"Saving DynamicalMatrix to {dmx_path}")

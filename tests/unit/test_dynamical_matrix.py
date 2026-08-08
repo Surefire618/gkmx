@@ -9,6 +9,7 @@ from ase import io as ase_io
 
 from gkmx.dynamical_matrix import DynamicalMatrix
 from gkmx.io import parse_force_constants
+from gkmx.phonon import _symmetrize_v_site
 
 from .._tolerances import TOL_FP64, TOL_FP64_DERIVED
 
@@ -127,7 +128,14 @@ def test_jax_and_numpy_agree_with_reference(backend, setup):
     assert np.abs(v2 - v2_ref).max() \
         / max(np.abs(v2_ref).max(), 1e-30) < TOL_FP64_DERIVED
 
-    # Diagonal of v_qssa equals v_qsa by construction.
+    # `diag(v_qssa)` is no longer `v_qsa`: `v_qsa` carries the site-symmetrization
+    # (phonopy-canonical, and correct for the diagonal) while `v_qssa` does not,
+    # because the Cartesian-only average sets Gamma(R, q) = 1 and corrupts the
+    # velocity operator off the diagonal. The two are still tied exactly -- one
+    # is the site average of the other -- which pins both paths at once.
     diag = np.einsum("qssa->qsa", d.solution.v_qssa_cartesian).real
-    assert np.abs(diag - d.v_qsa_cartesian).max() \
+    recip = np.linalg.inv(np.asarray(prim.cell))
+    sym = _symmetrize_v_site(diag, d.q_points, d._phonon._symm_rots_frac, recip)
+    live = np.abs(d.v_qsa_cartesian).sum(axis=-1) > 0    # v_qsa zeroes sub-threshold modes
+    assert np.abs(sym[live] - np.asarray(d.v_qsa_cartesian)[live]).max() \
         / max(np.abs(d.v_qsa_cartesian).max(), 1e-30) < TOL_FP64

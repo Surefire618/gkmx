@@ -9,6 +9,7 @@ from ase import units
 
 from . import _constants as C
 from . import keys
+from . import masses as _masses
 from .io import json2atoms
 
 # gkmx internals expect heat_flux in eV/(Å²·fs). Vibes / legacy-gkx writers
@@ -218,7 +219,7 @@ def get_volume(dataset):
 @getter(keys.momenta)
 def get_momenta(dataset):
     """``p = m * v``."""
-    masses = xr.DataArray(np.asarray(dataset.attrs["masses"]), dims=keys.I)
+    masses = xr.DataArray(_masses.of_dataset(dataset), dims=keys.I)
     return dataset[keys.velocities] * masses  # order sensitive — keeps dim order
 
 
@@ -236,9 +237,7 @@ def get_energy_kinetic(dataset):
 )
 def get_stress_kinetic(dataset):
     """``sigma_kin = -(1/V) sum_i p_i p_i^T / m_i``; NaN-aligned with stress_potential."""
-    invmasses = 1.0 / xr.DataArray(
-        np.asarray(dataset.attrs["masses"]), dims=keys.I,
-    )
+    invmasses = 1.0 / xr.DataArray(_masses.of_dataset(dataset), dims=keys.I)
     invvolume = 1.0 / dataset[keys.volume]
     momenta = dataset[keys.momenta]
 

@@ -41,10 +41,10 @@ KAPPA_RAW_TOL = 1e-3
 # eigh returned. Averaging over multiplets suppresses that but cannot remove it
 # -- tau is a nonlinear fit and cv a 4th-order moment, so neither has an
 # invariant multiplet mean. REF is the midpoint of the fp32/fp64 x numpy/jax
-# spread (0.443910 to 0.443953) so no configuration sits at the edge of the
+# spread (0.443171 to 0.443204) so no configuration sits at the edge of the
 # band. Tightening TOL needs the fit taken on the invariant trace of g.
 # See test_degenerate_basis.py and test_precision_switch.py.
-KAPPA_CORRECTED_REF = 0.443931
+KAPPA_CORRECTED_REF = 0.443187
 KAPPA_CORRECTED_TOL = 1e-4
 
 # Anharmonicity score: std(f_DFT − f_harmonic) / std(f_DFT).

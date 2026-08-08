@@ -12,7 +12,7 @@ from ase import io as ase_io
 from gkmx.io import parse_force_constants
 from gkmx.lattice_points import get_commensurate_q_points
 from gkmx.phonon import (
-    DEGENERACY_CONVENTIONS,
+    SYMMETRY_METHODS,
     Phonon,
     SolutionWithGVM,
     degenerate_sets,
@@ -136,23 +136,26 @@ def test_p2s_map_is_noop_for_tdep(setup):
     np.testing.assert_allclose(sol_a.w_qs, sol_b.w_qs, rtol=TOL_FP64, atol=0)
 
 
-def test_degeneracy_convention_is_validated(setup):
-    """`degeneracy` selects how a degenerate subspace fixes its group velocities:
-    "phonopy" rotates the basis to diagonalise dD/dq . probe, "tdep" leaves the
-    basis alone and gives every member the subspace mean."""
+def test_symmetry_method_is_validated(setup):
+    """`symmetry_method` selects the whole symmetry convention, not one knob.
+
+    "PHONOPY" rotates the degenerate basis to diagonalise dD/dq . probe and
+    averages the Cartesian index of v_qsa; "TDEP" gives every member of a
+    multiplet the subspace mean and averages the mode indices of v_qssa
+    instead. Each leaves alone the index the other symmetrizes."""
     prim, sc, fc, _, _ = setup
-    assert set(DEGENERACY_CONVENTIONS) == {"phonopy", "tdep"}
+    assert set(SYMMETRY_METHODS) == {"PHONOPY", "TDEP"}
 
-    for convention in DEGENERACY_CONVENTIONS:
+    for convention in SYMMETRY_METHODS:
         ph = Phonon(force_constants=fc, primitive=prim, supercell=sc,
-                    degeneracy=convention)
-        assert ph.degeneracy == convention
+                    symmetry_method=convention)
+        assert ph.symmetry_method == convention
 
-    with pytest.raises(ValueError, match="degeneracy"):
-        Phonon(force_constants=fc, primitive=prim, supercell=sc, degeneracy="bogus")
+    with pytest.raises(ValueError, match="symmetry_method"):
+        Phonon(force_constants=fc, primitive=prim, supercell=sc, symmetry_method="bogus")
 
 
-def test_tdep_degeneracy_gives_one_velocity_per_multiplet(setup):
+def test_tdep_method_gives_one_velocity_per_multiplet(setup):
     """TDEP assigns the subspace mean, so a multiplet carries a single velocity.
 
     That mean is a trace, hence basis-independent -- which is the whole point of
@@ -160,19 +163,19 @@ def test_tdep_degeneracy_gives_one_velocity_per_multiplet(setup):
     """
     prim, sc, fc, q, _ = setup
     sol = {c: Phonon(force_constants=fc, primitive=prim, supercell=sc,
-                     degeneracy=c).solve(q, with_velocities=True)
-           for c in DEGENERACY_CONVENTIONS}
+                     symmetry_method=c).solve(q, with_velocities=True)
+           for c in SYMMETRY_METHODS}
 
-    w = np.abs(np.asarray(sol["tdep"].w_qs))
+    w = np.abs(np.asarray(sol["TDEP"].w_qs))
     blocks = list(degenerate_sets(w))
     assert blocks, "fixture has no degenerate multiplets; this test is vacuous"
 
-    v_tdep = np.asarray(sol["tdep"].v_qsa_cartesian)
+    v_tdep = np.asarray(sol["TDEP"].v_qsa_cartesian)
     for qi, start, stop in blocks:
         blk = v_tdep[qi, start:stop]
         assert np.allclose(blk, blk[0], atol=1e-12), (
             f"tdep left different velocities in the multiplet at q={qi}: {blk}")
 
     # Frequencies do not read the velocity treatment, so the two must agree.
-    np.testing.assert_allclose(np.asarray(sol["tdep"].w_qs),
-                               np.asarray(sol["phonopy"].w_qs), atol=TOL_FP64)
+    np.testing.assert_allclose(np.asarray(sol["TDEP"].w_qs),
+                               np.asarray(sol["PHONOPY"].w_qs), atol=TOL_FP64)

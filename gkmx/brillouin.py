@@ -171,3 +171,43 @@ def get_symmetrized_array(array, map2ir, map2full, xarray=True):
     if xarray:
         return result
     return result.data
+
+
+def little_group(q_frac, rotations_frac, lattice, tol=1e-6):
+    """Indices of the space-group operations that leave ``q`` invariant.
+
+        L(q) = { R in G : R q = q + G_hkl }
+
+    A general operation carries q to another point of its star, relating D(q) to
+    D(Rq); the operations in L(q) carry q to itself and so constrain D(q)
+    internally,
+
+        Gamma(R, q)^dag D(q) Gamma(R, q) = D(q)
+
+    Degeneracy at q follows: a multiplet spans an irreducible representation of
+    L(q) and its dimension is the degeneracy. Exact degeneracies therefore occur
+    only where ``|L(q)| > 1`` -- on a mesh shifted off the high-symmetry points,
+    essentially nowhere.
+
+    Time reversal is excluded. The antiunitary branch ``R q = -q`` would enlarge
+    the group and change any average taken over it.
+
+    Args:
+        q_frac: q-point, fractional reciprocal coordinates, 2pi-free.
+        rotations_frac: space-group rotations in fractional coordinates.
+        lattice: primitive lattice vectors as rows.
+        tol: how close ``R q - q`` must sit to a reciprocal lattice vector.
+
+    Returns:
+        Indices into ``rotations_frac`` of the operations in L(q).
+    """
+    A = np.asarray(lattice)
+    Ainv = np.linalg.inv(A)
+    R_cart = np.einsum("ij,njk,kl->nil", A.T, rotations_frac, np.linalg.inv(A.T))
+    qc = np.asarray(q_frac) @ Ainv.T
+    keep = []
+    for n in range(len(rotations_frac)):
+        f = (qc - R_cart[n] @ qc) @ A.T
+        if np.abs(f - np.rint(f)).max() < tol:
+            keep.append(n)
+    return keep
