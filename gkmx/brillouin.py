@@ -178,8 +178,8 @@ def little_group(q_frac, rotations_frac, lattice, tol=1e-6):
 
         L(q) = { R in G : R q = q + G_hkl }
 
-    A general operation carries q to another point of its star, relating D(q) to
-    D(Rq); the operations in L(q) carry q to itself and so constrain D(q)
+    A general operation carries q to a symmetry-equivalent point, relating D(q)
+    to D(Rq); the operations in L(q) carry q to itself and so constrain D(q)
     internally,
 
         Gamma(R, q)^dag D(q) Gamma(R, q) = D(q)

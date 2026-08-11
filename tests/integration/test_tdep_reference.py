@@ -221,10 +221,11 @@ def test_coherent_kappa_from_tdep_linewidths(fixture):
         ker = (G_j + G_k) / ((G_j + G_k)^2 + (w_j - w_k)^2)
         kappa_C = (1/V) sum_q w_q sum_{j != k} v_jk (x) v_jk ker f0
 
-    Compared as the trace. TDEP averages ``v (x) v`` over the star of q before
-    accumulating, and that rotation preserves ``sum_a (R v)^a (R v)^a = |v|^2``
-    -- so the trace is reproducible without the star operations, while the
-    individual Cartesian components are not. It is also the phase-invariant
+    Compared as the trace. TDEP averages ``v (x) v`` over the symmetry-equivalent
+    q before accumulating, and that rotation preserves
+    ``sum_a (R v)^a (R v)^a = |v|^2`` -- so the trace is reproducible without
+    those operations, while the individual Cartesian components are not. It is
+    also the phase-invariant
     combination, which matters because ``Re(v_ss')`` is gauge-dependent.
 
     This is the one test that exercises the velocity operator end-to-end: an

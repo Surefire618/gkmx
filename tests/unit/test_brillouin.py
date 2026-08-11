@@ -55,7 +55,7 @@ def test_get_bz_mesh_full_and_reduced():
 
 
 def test_get_symmetrized_array_collapses_equivalent_qs(q_grid):
-    """Symmetrization must (a) make every star of equivalent q-points
+    """Symmetrization must (a) make every set of symmetry-equivalent q-points
     carry the same value, (b) preserve the mean (the linear-average
     contract), (c) leave constants unchanged."""
     grid, *_ = q_grid
@@ -68,8 +68,8 @@ def test_get_symmetrized_array_collapses_equivalent_qs(q_grid):
     for ir_idx in range(len(grid.ir.points)):
         mask = grid.ir.map2full == ir_idx
         if mask.sum() > 1:
-            stars = sym_data[:, mask]
-            assert np.allclose(stars - stars[:, :1], 0)
+            equivalent = sym_data[:, mask]
+            assert np.allclose(equivalent - equivalent[:, :1], 0)
 
     np.testing.assert_allclose(
         np.asarray(arr).mean(axis=1), sym_data.mean(axis=1),
