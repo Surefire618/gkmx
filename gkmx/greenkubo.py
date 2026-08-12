@@ -28,6 +28,7 @@ from .dynamical_matrix import DynamicalMatrix
 from .interpolation import get_interpolation_data
 from .io import parse_force_constants
 from .kappa import get_kappa_BTE, qhgk_tau_eff
+from .kappa import symmetrize_kappa as _symmetrize_kappa
 from .mic import fold as mic_fold
 from .mic import is_orthogonal
 from .phonon import degenerate_sets
@@ -697,7 +698,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
               lifetime_fit_cutoff=0.5,
               correct_finite_time=True,
               enforce_translational_invariance=True,
-              symmetry_method="PHONOPY"):
+              convention="PHONOPY"):
     """Run the full Green-Kubo thermal-conductivity pipeline on an MD trajectory.
 
     The pipeline:
@@ -755,11 +756,10 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
             finite-time correction. Affects long-lifetime modes only.
         enforce_translational_invariance: impose the acoustic sum rule on the
             force constants before solving; see ``Phonon``. Default ``True``.
-        symmetry_method: ``"PHONOPY"`` (default) or ``"TDEP"`` -- the symmetry
-            convention used for the degenerate subspaces and for which index of
-            the velocity is averaged over the little group. Moves kappa_BTE and
-            kappa_QHGK; leaves the raw HFACF kappa untouched, which never sees
-            symmetry.
+        convention: ``"PHONOPY"`` (default) or ``"TDEP"``; see
+            ``gkmx.phonon.CONVENTIONS``. The eigenvectors enter the mode
+            projection, so tau and cv move with it and kappa_BTE moves too, not
+            only kappa_QHGK. The raw HFACF kappa never sees it.
 
     Returns:
         ``xr.Dataset`` with kappa tensor, HFACF, mode-resolved
@@ -860,7 +860,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
             force_constants=np.asarray(fc), primitive=primitive, supercell=supercell,
             with_group_velocity_matrices=True, backend=backend, precision=p.name,
             enforce_translational_invariance=enforce_translational_invariance,
-            symmetry_method=symmetry_method,
+            convention=convention,
         )
         if dmx_path:
             _talk(f"Saving DynamicalMatrix to {dmx_path}")
@@ -874,7 +874,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
             force_constants=fc, primitive=primitive, supercell=supercell,
             with_group_velocity_matrices=True, backend=backend, precision=p.name,
             enforce_translational_invariance=enforce_translational_invariance,
-            symmetry_method=symmetry_method,
+            convention=convention,
         )
         if dmx_path:
             _talk(f"Saving DynamicalMatrix to {dmx_path}")
@@ -984,6 +984,10 @@ def _get_gk_dataset(dataset, dmx=None, interpolate=False,
         keys.kappa: (keys.tensor, ks),
         keys.time_cutoff: (keys.tensor, ts),
     }
+
+    if dmx is not None:
+        data[keys.kappa_symmetrized] = (
+            keys.tensor, np.asarray(_symmetrize_kappa(ks, dmx.primitive)))
 
     if dmx is not None:
         timer = Timer("Anharmonicity", prefix=_prefix)

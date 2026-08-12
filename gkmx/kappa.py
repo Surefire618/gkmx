@@ -134,3 +134,53 @@ def get_kappa_QHGK(v_qssa, tau_qs, w_qs, w_inv_qs, cv_qs=None, weights=None,
     return result
 
 
+
+
+def symmetrize_kappa(kappa_ab, primitive, symprec=1e-5):
+    """Project a conductivity tensor onto the crystal point group.
+
+        kappa <- (1/|G|) sum_R  R kappa R^T
+
+    A conductivity tensor satisfies ``R kappa R^T = kappa``, but what
+    ``get_kappa_QHGK`` returns need not: in the TDEP Bloch convention
+    ``D_T = P D* P^dag`` the phase runs over lattice vectors alone, so under a
+    symmetry operation it retains
+    ``exp(-2 pi i Rq . (L_b - L_a))`` from the lattice vectors the atoms are
+    displaced by. That phase depends on q, so it survives differentiation and
+    leaves ``v_ss'`` non-covariant.
+
+    This function averages over all rotation operators, enforcing the crystal
+    symmetry on the kappa tensor. The projection preserves the trace exactly
+    (each ``R kappa R^T`` does), so kappa_avg is untouched and only the
+    anisotropy changes.
+
+    TDEP has the same defect and applies exactly this average to every
+    channel before writing output (`kappa.f90::symmetrize_kappa`).
+
+    Args:
+        kappa_ab: ``(3, 3)`` conductivity tensor, array or DataArray.
+        primitive: ASE Atoms whose space group supplies the rotations.
+        symprec: spglib symmetry tolerance.
+
+    Returns:
+        The symmetrized tensor, same type as ``kappa_ab``.
+    """
+    import spglib
+
+    A = np.asarray(primitive.cell)
+    dataset = spglib.get_symmetry(
+        (A, primitive.get_scaled_positions(), primitive.get_atomic_numbers()),
+        symprec=symprec)
+    rotations = dataset["rotations"]
+
+    K = np.asarray(kappa_ab.data if hasattr(kappa_ab, "data") else kappa_ab)
+    A_inv_T = np.linalg.inv(A.T)
+    out = np.zeros((3, 3), dtype=np.float64)
+    for R in rotations:
+        R_cart = A.T @ R @ A_inv_T
+        out += R_cart @ np.asarray(K, dtype=np.float64) @ R_cart.T
+    out = (out / len(rotations)).astype(K.dtype)
+
+    if isinstance(kappa_ab, xr.DataArray):
+        return xr.DataArray(out, dims=kappa_ab.dims, name=kappa_ab.name)
+    return out

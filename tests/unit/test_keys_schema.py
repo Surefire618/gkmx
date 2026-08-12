@@ -57,6 +57,7 @@ EXPECTED_VALUES = {
     "v_qssa_cartesian": "v_qssa_cartesian",
     # Kappa
     "kappa": "thermal_conductivity",
+    "kappa_symmetrized": "thermal_conductivity_symmetrized",
     "kappa_ha": "thermal_conductivity_harmonic",
     "kappa_ha_symmetrized": "thermal_conductivity_harmonic_symmetrized",
     "kappa_QHGK": "thermal_conductivity_QHGK",

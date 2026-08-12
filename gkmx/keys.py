@@ -83,6 +83,7 @@ mode_heat_capacity = _join("mode", heat_capacity)
 mode_lifetime = "mode_lifetime"
 
 kappa = "thermal_conductivity"
+kappa_symmetrized = _join(kappa, symmetrized)
 kappa_ha = _join(kappa, _harmonic)
 kappa_ha_symmetrized = _join(kappa_ha, symmetrized)
 kappa_QHGK = _join(kappa, _QHGK)

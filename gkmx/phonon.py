@@ -239,17 +239,17 @@ def _jax_solve(fc_mw, j_of_k, svec_frac, multi_mask, q_frac, pcell_cart, N_p,
 
 def _symmetrize_v_site(v_qsa, q_frac, rots_frac, recip_lattice, tol=1e-5):
     """Phonopy-style site-symmetrize per-mode group velocities."""
-    real_dt = v_qsa.real.dtype
-    recip_lattice = recip_lattice.astype(real_dt)
+    real_dtype = v_qsa.real.dtype
+    recip_lattice = recip_lattice.astype(real_dtype)
     recip_inv = np.linalg.inv(recip_lattice)
     r_cart = np.einsum("ij,ojk,kl->oil",
-                       recip_lattice, rots_frac.astype(real_dt), recip_inv)
+                       recip_lattice, rots_frac.astype(real_dtype), recip_inv)
 
     q_in_BZ = q_frac - np.rint(q_frac)
     rq = np.einsum("oij,qj->oqi", rots_frac, q_in_BZ)
     mask = np.all(np.abs(rq - q_in_BZ[None, :, :]) < tol, axis=-1)
     count = mask.sum(axis=0)
-    count_safe = np.where(count > 0, count, 1).astype(real_dt)
+    count_safe = np.where(count > 0, count, 1).astype(real_dtype)
 
     out = np.einsum("oq,oba,qsa->qsb",
                     mask.astype(v_qsa.dtype), r_cart.astype(v_qsa.dtype), v_qsa,
@@ -274,22 +274,21 @@ _PERTURB_PROBE = np.array([1.0, 2.0, 3.0]) / np.sqrt(14.0)
 
 DEGENERACY_TOL = 1e-4 / C.omega_to_THz   # matches phonopy degenerate_sets cutoff
 
-# Which symmetry convention the solver follows. The two codes symmetrize
-# exactly the index the other leaves alone, so each is coherent on its own terms
-# and neither is a corrected version of the other:
+# The convention gkmx Phonon follows: PHONOPY or TDEP.
 #
-#                       "PHONOPY"                    "TDEP"
-#   degenerate subspace rotate so dD/dq . probe      every member takes the
-#                       is diagonal, per-mode v      subspace mean trace/mb,
-#                       kept distinct                eigenvectors unrotated
-#   diagonal v_qsa      averaged over L(q) in the    left alone
-#                       Cartesian index
-#   off-diagonal        left alone                   averaged over L(q) in the
-#   v_qssa                                           mode indices via Gamma(R,q)
+# Degenerate modes:
+# PHONOPY rotates the block to diagonalize dD/dq . probe, keeps a velocity per
+# mode, and averages the Cartesian index of v_qsa over L(q);
+# TDEP gives the whole multiplet the subspace mean trace/mb and averages the mode
+# indices of v_qssa.
 #
-# The pair is not interchangeable: each average is the identity only on the
-# index it acts on, so applying one where the other belongs over-projects.
-SYMMETRY_METHODS = ("PHONOPY", "TDEP")
+# Bloch convention:
+# PHONOPY uses the smallest-vector phases alone;
+# TDEP applies D_T = P D* P^dag with P = diag(exp(-2 pi i q . r_a)); see `gkmx/tdep.py`.
+#
+# Frequencies and v_qsa and thus kappa_BTE are identical in the two conventions.
+# Eigenvectors and v_qssa off the diagonal and thus kappa_QHGK differ.
+CONVENTIONS = ("PHONOPY", "TDEP")
 
 
 def degenerate_sets(w_qs, tol=DEGENERACY_TOL):
@@ -444,6 +443,32 @@ def symmetrize_v_qssa(v_qssa, e_qsi, q_points_frac, atoms, symprec=1e-5):
         out[iq] = acc / len(ops)
     return out
 
+def _to_tdep_bloch(w2, e, M, q_frac, atoms):
+    """Map row eigenvectors and mode-basis ``dD/dq`` into TDEP's Bloch convention.
+
+    With ``P = diag(exp(-2 pi i q . r_a))`` and ``D_T = P D* P^dag`` the columns
+    follow as ``U_T = P conj(U)``, hence in row form ``e_T = P conj(e)``. For the
+    gradient, writing ``R^a = U^T r_a conj(U)``,
+
+        M_T^a = conj(M^a) - 2 pi i R^a_{ss'} (w2_s' - w2_s)
+
+    The commutator term is the whole difference between the conventions. It
+    vanishes when ``w2_s == w2_s'``, so the diagonal group velocity is common to
+    both and only the off-diagonal moves.
+    """
+    frac = np.asarray(atoms.get_scaled_positions())
+    r = np.repeat(np.asarray(atoms.positions), 3, axis=0)
+    q = np.asarray(q_frac, dtype=float)
+    phase = np.exp(-2j * np.pi * (frac @ q.T)).T          # (Nq, N_p)
+    P = np.repeat(phase, 3, axis=1)                       # (Nq, 3 N_p)
+
+    e_T = P[:, None, :] * np.conj(e)
+    Rq = np.einsum("qsi,ia,qti->qast", e, r, np.conj(e), optimize=True)
+    dw2 = w2[:, None, :] - w2[:, :, None]                 # w2_s' - w2_s
+    M_T = np.conj(M) - 2j * np.pi * Rq * dw2[:, None, :, :]
+    return e_T, M_T
+
+
 def _rotate_degenerate_subspaces(w2, e, M, probe=_PERTURB_PROBE):
     """Rotate eigh's arbitrary degenerate basis to phonopy's _perturb_D convention."""
     e = np.array(e, copy=True)
@@ -476,7 +501,7 @@ class Phonon:
 
     def __init__(self, force_constants, primitive, supercell,
                  backend="numpy", precision="fp64", p2s_map=None, factor=1.0,
-                 enforce_translational_invariance=True, symmetry_method="PHONOPY"):
+                 enforce_translational_invariance=True, convention="PHONOPY"):
         """Build the solver.
 
         Args:
@@ -506,12 +531,9 @@ class Phonon:
                 constants exactly as supplied, at the cost of Gamma acoustics
                 that do not sit at zero and a ``1/w`` that leaks into every
                 ``1/w``-weighted mode sum.
-            symmetry_method: ``"PHONOPY"`` (default) or ``"TDEP"`` -- the whole
-                symmetry convention, not one knob. PHONOPY rotates a degenerate
-                subspace so ``dD/dq . probe`` is diagonal and averages the
-                Cartesian index of ``v_qsa``; TDEP gives every member of a
-                multiplet the subspace mean and averages the mode indices of
-                ``v_qssa``. Each leaves alone the index the other symmetrizes.
+            convention: ``"PHONOPY"`` (default) or ``"TDEP"``. Same ``w_qs`` and
+                ``v_qsa_cartesian`` either way; ``e_qsi`` and
+                ``v_qssa_cartesian`` off the diagonal differ. See ``CONVENTIONS``.
         """
         from .precision import Precision
         if backend not in ("numpy", "jax"):
@@ -532,16 +554,15 @@ class Phonon:
             primitive = primitive.copy()
             primitive.positions = np.asarray(supercell.positions)[p2s_map]
 
-        symmetry_method = str(symmetry_method).upper()
-        if symmetry_method not in SYMMETRY_METHODS:
+        convention = str(convention).upper()
+        if convention not in CONVENTIONS:
             raise ValueError(
-                f"symmetry_method must be one of {SYMMETRY_METHODS}, "
-                f"got {symmetry_method!r}")
+                f"convention must be one of {CONVENTIONS}, got {convention!r}")
         self.primitive = primitive
         self.supercell = supercell
         self.backend = backend
         self.precision = precision
-        self.symmetry_method = symmetry_method
+        self.convention = convention
         self._dtype_real = dtype_real
         self._dtype_complex = dtype_complex
 
@@ -631,10 +652,20 @@ class Phonon:
                         with_velocities, with_group_velocity_matrices):
         # Fix the degenerate subspaces before extracting per-mode velocities;
         # see memory/project_dDdq_boundary_bug.md.
-        if self.symmetry_method == "TDEP":
+        if self.convention == "TDEP":
             e, M = _average_degenerate_subspaces(w2, e, M)
         else:
             e, M = _rotate_degenerate_subspaces(w2, e, M)
+
+        # After the degenerate handling, not before: the validated route fixes the
+        # multiplet basis in gkmx's convention and then maps it over.
+        if self.convention == "TDEP":
+            e, M = _to_tdep_bloch(w2, e, M, q_frac, self.primitive)
+            ph = np.repeat(
+                np.exp(-2j * np.pi * (np.asarray(self.primitive.get_scaled_positions())
+                                      @ np.asarray(q_frac, dtype=float).T)).T,
+                3, axis=1)
+            D_q = ph[:, :, None] * np.conj(D_q) * np.conj(ph)[:, None, :]
 
         w_qs = np.sign(w2) * np.sqrt(np.abs(w2))
 
@@ -669,7 +700,7 @@ class Phonon:
         v_diag = np.einsum("qajj->qja", M)
         v_qsa = (v_diag.real / (2.0 * sqrt_safe[:, :, None])) * C.gv_to_AA_fs
 
-        if self.symmetry_method == "PHONOPY":
+        if self.convention == "PHONOPY":
             recip_lat = np.linalg.inv(np.asarray(self.primitive.cell))
             v_qsa = _symmetrize_v_site(v_qsa, q_frac, self._symm_rots_frac, recip_lat)
 
@@ -695,7 +726,7 @@ class Phonon:
         # so the Cartesian average applied to v_qsa above is the diagonal case,
         # where Gamma(R, q) is a phase and cancels. Off the diagonal it does
         # not, and the mode-index average is the one that belongs here.
-        if self.symmetry_method == "TDEP":
+        if self.convention == "TDEP":
             v_qssa = symmetrize_v_qssa(v_qssa, e_qsi, q_frac, self.primitive)
 
         band_mask = v_ok[:, :, None] & v_ok[:, None, :]

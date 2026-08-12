@@ -151,7 +151,7 @@ class DynamicalMatrix:
     def __init__(self, force_constants, primitive, supercell,
                  with_group_velocity_matrices=False, backend="numpy",
                  precision="fp64", enforce_translational_invariance=True,
-                 symmetry_method="PHONOPY"):
+                 convention="PHONOPY"):
         """Build the adapter and solve on the commensurate q-grid.
 
         Args:
@@ -176,13 +176,10 @@ class DynamicalMatrix:
                 constants exactly as supplied, at the cost of Gamma acoustics
                 that do not sit at zero and a ``1/w`` that leaks into every
                 ``1/w``-weighted mode sum.
-            symmetry_method: ``"PHONOPY"`` (default) or ``"TDEP"`` -- the whole
-                symmetry convention, not one knob. PHONOPY rotates a degenerate
-                subspace so ``dD/dq . probe`` is diagonal and averages the
-                Cartesian index of ``v_qsa``; TDEP gives every member of a
-                multiplet the subspace mean and averages the mode indices of
-                ``v_qssa`` instead. Each leaves alone the index the other
-                symmetrizes, so they are not interchangeable.
+            convention: ``"PHONOPY"`` (default) or ``"TDEP"``. Same frequencies
+                and diagonal group velocity either way; eigenvectors and
+                ``v_qssa`` off the diagonal differ. See
+                ``gkmx.phonon.CONVENTIONS``.
         """
         self.primitive = primitive.copy()
         self.supercell = supercell.copy()
@@ -202,7 +199,7 @@ class DynamicalMatrix:
         p = Precision.from_str(precision)
         self._dtype_real, self._dtype_complex = p.real, p.complex
 
-        self._symmetry_method = symmetry_method
+        self._convention = convention
         self._setup_lattice_and_grid(primitive, supercell)
 
         self._phonon = Phonon(
@@ -212,7 +209,7 @@ class DynamicalMatrix:
             backend=backend,
             precision=precision,
             enforce_translational_invariance=enforce_translational_invariance,
-            symmetry_method=symmetry_method,
+            convention=convention,
         )
         self._solution = self._phonon.solve(
             q_points_frac=self._q_grid.points,
@@ -346,7 +343,7 @@ class DynamicalMatrix:
                 supercell=self.supercell,
                 backend=self._backend,
                 precision=self._precision,
-                symmetry_method=self._symmetry_method,
+                convention=self._convention,
             )
         return self._phonon
 
@@ -496,7 +493,7 @@ class DynamicalMatrix:
         obj._fc_phonopy = np.asarray(ds[keys.fc_phonopy].data)
         obj._backend = backend
         obj._precision = precision
-        obj._symmetry_method = "PHONOPY"
+        obj._convention = "PHONOPY"
         obj._dtype_real = dtype_real
         obj._dtype_complex = dtype_complex
 

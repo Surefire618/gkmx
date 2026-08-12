@@ -12,9 +12,10 @@ from ase import io as ase_io
 from gkmx.io import parse_force_constants
 from gkmx.lattice_points import get_commensurate_q_points
 from gkmx.phonon import (
-    SYMMETRY_METHODS,
+    CONVENTIONS,
     Phonon,
     SolutionWithGVM,
+    _symmetrize_v_site,
     degenerate_sets,
 )
 
@@ -34,6 +35,26 @@ def setup():
     ref = xr.open_dataset(str(DATA_DIR / "DynamicalMatrix.nc"),
                           engine="h5netcdf").load()
     return prim, sc, fc, q, ref
+
+
+@pytest.fixture(scope="module")
+def tdep_setup():
+    """tdep_KI_bcc: TDEP-fitted constants, so multiplets survive away from TRIM.
+
+    KI_B2_MLIP cannot be used for anything about multiplet velocities. Its fitted
+    constants carry a 6.9 % ASR residual which splits every symmetry-forced
+    degeneracy except at TRIM, and at TRIM v = 0 by symmetry -- so all 3 of its
+    multiplets average to exactly zero (measured 6.4e-17 relative) and cannot
+    constrain the averaging. These constants give 58 multiplets, 56 of them with
+    a nonzero averaged velocity.
+    """
+    d = Path(__file__).parent.parent / "datasets" / "tdep_KI_bcc"
+    prim = ase_io.read(str(d / "geometry.in.primitive"), format="aims")
+    sc = ase_io.read(str(d / "geometry.in.supercell"), format="aims")
+    fc = np.asarray(parse_force_constants(
+        str(d / "FORCE_CONSTANTS_tdep"), two_dim=False))
+    q = np.asarray(get_commensurate_q_points(prim.cell, sc.cell, fractional=True))
+    return prim, sc, fc, q
 
 
 def test_solve_shapes_invariants_and_reference(setup):
@@ -136,46 +157,122 @@ def test_p2s_map_is_noop_for_tdep(setup):
     np.testing.assert_allclose(sol_a.w_qs, sol_b.w_qs, rtol=TOL_FP64, atol=0)
 
 
-def test_symmetry_method_is_validated(setup):
-    """`symmetry_method` selects the whole symmetry convention, not one knob.
+def test_convention_is_validated(setup):
+    """`convention` selects the whole upstream convention, not one knob.
 
     "PHONOPY" rotates the degenerate basis to diagonalise dD/dq . probe and
     averages the Cartesian index of v_qsa; "TDEP" gives every member of a
-    multiplet the subspace mean and averages the mode indices of v_qssa
-    instead. Each leaves alone the index the other symmetrizes."""
+    multiplet the subspace mean, averages the mode indices of v_qssa instead,
+    and carries the per-atom Bloch phase. Each leaves alone the index the other
+    symmetrizes."""
     prim, sc, fc, _, _ = setup
-    assert set(SYMMETRY_METHODS) == {"PHONOPY", "TDEP"}
+    assert set(CONVENTIONS) == {"PHONOPY", "TDEP"}
 
-    for convention in SYMMETRY_METHODS:
+    for convention in CONVENTIONS:
         ph = Phonon(force_constants=fc, primitive=prim, supercell=sc,
-                    symmetry_method=convention)
-        assert ph.symmetry_method == convention
+                    convention=convention)
+        assert ph.convention == convention
 
-    with pytest.raises(ValueError, match="symmetry_method"):
-        Phonon(force_constants=fc, primitive=prim, supercell=sc, symmetry_method="bogus")
+    with pytest.raises(ValueError, match="convention"):
+        Phonon(force_constants=fc, primitive=prim, supercell=sc, convention="bogus")
 
 
-def test_tdep_method_gives_one_velocity_per_multiplet(setup):
+def test_tdep_method_gives_one_velocity_per_multiplet(tdep_setup):
     """TDEP assigns the subspace mean, so a multiplet carries a single velocity.
 
-    That mean is a trace, hence basis-independent -- which is the whole point of
-    the convention, and what "phonopy" trades away to keep members distinct.
+    That mean is a trace, hence basis-independent.
     """
-    prim, sc, fc, q, _ = setup
-    sol = {c: Phonon(force_constants=fc, primitive=prim, supercell=sc,
-                     symmetry_method=c).solve(q, with_velocities=True)
-           for c in SYMMETRY_METHODS}
+    prim, sc, fc, q = tdep_setup
+    sol = Phonon(force_constants=fc, primitive=prim, supercell=sc,
+                 precision="fp64", convention="TDEP").solve(q, with_velocities=True)
+    w = np.abs(np.asarray(sol.w_qs))
+    v = np.asarray(sol.v_qsa_cartesian)
 
-    w = np.abs(np.asarray(sol["TDEP"].w_qs))
     blocks = list(degenerate_sets(w))
     assert blocks, "fixture has no degenerate multiplets; this test is vacuous"
 
-    v_tdep = np.asarray(sol["TDEP"].v_qsa_cartesian)
     for qi, start, stop in blocks:
-        blk = v_tdep[qi, start:stop]
+        blk = v[qi, start:stop]
         assert np.allclose(blk, blk[0], atol=1e-12), (
             f"tdep left different velocities in the multiplet at q={qi}: {blk}")
 
-    # Frequencies do not read the velocity treatment, so the two must agree.
-    np.testing.assert_allclose(np.asarray(sol["TDEP"].w_qs),
-                               np.asarray(sol["PHONOPY"].w_qs), atol=TOL_FP64)
+
+def test_convention_agrees_on_frequencies(setup):
+    """Frequencies are the eigenvalues of D(q), which neither half of the
+    convention touches: the Bloch map is a similarity transform and the multiplet
+    treatment acts only on the velocity."""
+    prim, sc, fc, q, _ = setup
+    w = {c: np.asarray(Phonon(force_constants=fc, primitive=prim, supercell=sc,
+                              precision="fp64", convention=c).solve(q).w_qs)
+         for c in CONVENTIONS}
+    rel = np.abs(w["TDEP"] - w["PHONOPY"]).max() / np.abs(w["PHONOPY"]).max()
+    assert rel < TOL_FP64, f"convention moved the frequencies by {rel:.2e}"
+
+
+def test_convention_difference_on_the_diagonal_is_the_site_average(setup):
+    """On ``v_qsa`` the whole difference between conventions is the site average.
+
+    The Bloch map spares the diagonal (its commutator term goes as
+    ``w_s^2 - w_s'^2``) and the multiplet treatments agree there too, so what is
+    left is the Cartesian site average PHONOPY applies over L(q) and TDEP does
+    not. That average is the identity only when the force constants respect the
+    site symmetry: on the TDEP-fitted fixtures it moves ``v_qsa`` by 1e-14, but
+    these MLIP constants carry a 6.9 % ASR residual and it moves them by
+    2.8e-01. So kappa_BTE is not convention-free on fitted force constants.
+    """
+    prim, sc, fc, q, _ = setup
+    v = {}
+    for c in CONVENTIONS:
+        ph = Phonon(force_constants=fc, primitive=prim, supercell=sc,
+                    precision="fp64", convention=c)
+        v[c] = (ph, np.asarray(ph.solve(q, with_velocities=True).v_qsa_cartesian))
+    (ph_phonopy, v_phonopy), (_, v_tdep) = v["PHONOPY"], v["TDEP"]
+
+    recip = np.linalg.inv(np.asarray(prim.cell))
+    averaged = _symmetrize_v_site(v_tdep.copy(), q, ph_phonopy._symm_rots_frac, recip)
+    assert np.abs(v_phonopy - averaged).max() / np.abs(v_phonopy).max() < TOL_FP64, (
+        "PHONOPY's v_qsa is not the site average of TDEP's")
+
+    moved = np.abs(v_phonopy - v_tdep).max() / np.abs(v_phonopy).max()
+    assert moved > 1e-3, (
+        f"the site average did nothing here (max {moved:.2e}); the assertion "
+        f"above holds trivially and proves nothing about routing")
+
+
+def test_convention_changes_the_off_diagonal_velocity(setup):
+    """``convention`` reaches ``v_ss'`` off the diagonal, where the Bloch gauge acts.
+
+    The switch would be a silent no-op if it did not, and every comparison drawn
+    between the two conventions elsewhere would be vacuous.
+    """
+    prim, sc, fc, q, _ = setup
+    v = {c: np.asarray(
+            Phonon(force_constants=fc, primitive=prim, supercell=sc,
+                   precision="fp64", convention=c).solve(
+                q, with_velocities=True,
+                with_group_velocity_matrices=True).v_qssa_cartesian)
+         for c in CONVENTIONS}
+
+    off = ~np.eye(v["PHONOPY"].shape[1], dtype=bool)
+    moved = (np.abs(v["PHONOPY"] - v["TDEP"])[:, off].max()
+             / np.abs(v["PHONOPY"]).max())
+    assert moved > 1e-3, (
+        f"convention left v_ss' unchanged off the diagonal (max {moved:.2e}); "
+        f"the switch is a no-op")
+
+
+def test_velocity_operator_is_hermitian(setup):
+    """``v_ss' = conj(v_s's)``, inherited from dD/dq being Hermitian.
+
+    A property of the solver, not of any kappa kernel: with a 1.5 % anti-Hermitian
+    part injected here, both gauge invariances in test_kappa_gauge.py still hold,
+    because the QHGK trace is invariant whether or not v is Hermitian.
+    """
+    prim, sc, fc, q, _ = setup
+    for c in CONVENTIONS:
+        v = np.asarray(Phonon(force_constants=fc, primitive=prim, supercell=sc,
+                              precision="fp64", convention=c).solve(
+            q, with_velocities=True,
+            with_group_velocity_matrices=True).v_qssa_cartesian)
+        rel = np.abs(v - np.conj(np.swapaxes(v, 1, 2))).max() / np.abs(v).max()
+        assert rel < TOL_FP64, f"{c}: v_ss' is not Hermitian, rel={rel:.2e}"
