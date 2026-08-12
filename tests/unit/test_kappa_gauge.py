@@ -22,7 +22,7 @@ from ase.io import read
 
 from gkmx import phonon as _phonon_mod
 from gkmx.io import parse_force_constants
-from gkmx.kappa import get_kappa_QHGK, symmetrize_kappa
+from gkmx.kappa import get_kappa_QHGK
 from gkmx.phonon import CONVENTIONS, Phonon, degenerate_sets
 
 from .._tolerances import TOL_FP64
