@@ -125,12 +125,28 @@ class TestPhonopyReference:
         assert _max_rel(out["V_ab"], V_ref) < TOL_FP64_DERIVED
 
     def test_group_velocity_matrix_matches(self, fixture_name, expected_sg):
-        """QHGK off-diagonal ``v_qssa(q)`` matches phonopy element-wise.
-        A regression here is most likely in ``_perturb_D`` /
-        ``_symmetrize_group_velocity`` or in the dD/dq Hermitization."""
+        """QHGK off-diagonal ``v_qssa(q)`` matches phonopy, per mode pair.
+
+        Compared as ``v^a_ss' conj(v^b_ss')`` rather than element-wise on
+        ``v_ss'`` itself. eigh fixes an eigenvector only up to a per-mode phase,
+        and that phase reaches ``v_ss'`` as ``exp(i(th_s' - th_s))`` -- so an
+        element-wise comparison pins whichever phases the local LAPACK happened
+        to return, not the physics. It held on the 3.10/3.11 runners and broke on
+        3.12 at 2.4e-01 against a 1e-06 band, with the frozen reference
+        unchanged. Measured here: injecting a random phase gauge moves the
+        element-wise residual to 6.0e-01 and leaves this form at 2.52e-12,
+        identical to the last digit.
+
+        The outer product cancels the phase and keeps every Cartesian component
+        and every mode pair resolved, so a regression in ``_perturb_D`` /
+        ``_symmetrize_group_velocity`` or in the dD/dq Hermitization still shows.
+        """
         ref, out = _solve(fixture_name)
-        gvm_ref = np.asarray(ref["group_velocity_matrix_THzA"])
-        assert _max_rel(out["v_qssa_THzA"], gvm_ref) < TOL_FP64_DERIVED
+        gvm_ref = np.moveaxis(np.asarray(ref["group_velocity_matrix_THzA"]), 1, -1)
+        gvm = np.moveaxis(np.asarray(out["v_qssa_THzA"]), 1, -1)
+        pair = np.einsum("qsta,qstb->qstab", gvm, np.conj(gvm)).real
+        pair_ref = np.einsum("qsta,qstb->qstab", gvm_ref, np.conj(gvm_ref)).real
+        assert _max_rel(pair, pair_ref) < TOL_FP64_DERIVED
 
     def test_eigenvector_projectors_match(self, fixture_name, expected_sg):
         """Per-degenerate-group projector ``P = Σ_{s∈grp} |e_s⟩⟨e_s|``
