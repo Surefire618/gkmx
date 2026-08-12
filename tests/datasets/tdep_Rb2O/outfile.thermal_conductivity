@@ -1,0 +1,14 @@
+# Unit:               W/m/K
+# Temperature:          0.300000000000E+03
+# Single mode approximation
+#                      kxx                      kyy                      kzz                      kxy                      kxz                      kyz
+        0.357431531719E+01       0.357431531719E+01       0.357431531719E+01       0.000000000000E+00       0.000000000000E+00       0.000000000000E+00
+# Collective contribution
+#                      kxx                      kyy                      kzz                      kxy                      kxz                      kyz
+        0.226430387439E+00       0.226430387439E+00       0.226430387439E+00       0.000000000000E+00       0.000000000000E+00       0.000000000000E+00
+# Off diagonal (coherence) contribution
+#                      kxx                      kyy                      kzz                      kxy                      kxz                      kyz
+        0.662622753900E-01       0.662622753900E-01       0.662622753900E-01       0.000000000000E+00       0.000000000000E+00       0.000000000000E+00
+# Total thermal conductivity
+#                      kxx                      kyy                      kzz                      kxy                      kxz                      kyz
+        0.386700798002E+01       0.386700798002E+01       0.386700798002E+01       0.000000000000E+00       0.000000000000E+00       0.000000000000E+00
