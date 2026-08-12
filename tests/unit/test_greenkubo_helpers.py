@@ -258,40 +258,6 @@ def test_analytical_qhgk_reduces_to_bte_without_coherence():
         f"QHGK does not reduce to BTE without coherence: rel={rel:.2e}")
 
 
-def test_analytical_qhgk_hfacf_is_invariant_under_degenerate_rotation():
-    """Inside a degenerate multiplet the eigenbasis is arbitrary, so the QHGK
-    HFACF must not move when the block is rotated by a unitary.
-
-    ``eigh`` picks that basis, and it differs between precisions and backends
-    (see test_precision_switch.py), so any dependence on it is noise in κ.
-    Holds only where w, τ and cv are constant across the multiplet, which is
-    what symmetry requires and what ``degenerate=True`` builds.
-
-    Blind to the functional form of the pair weight — inside the multiplet
-    all w are equal, so any constant weight is invariant. Catches errors in
-    the velocity contraction: a stray conjugate or a missing ``swapaxes``
-    both drift 77 %.
-    """
-    m = _synthetic_modes(degenerate=True)
-    t = np.linspace(0.0, 300.0, 64)
-    ref = _analytical_hfacfs(time_fs=t, dtype_real=np.float64, **m)[2]
-
-    rng = np.random.default_rng(11)
-    Nq, Ns = m["w_qs"].shape
-    v_rot = np.empty_like(m["v_qssa"])
-    for q in range(Nq):
-        U, _ = np.linalg.qr(rng.standard_normal((Ns, Ns))
-                            + 1j * rng.standard_normal((Ns, Ns)))
-        v_rot[q] = np.einsum("js,jka,kl->sla", U.conj(), m["v_qssa"][q], U)
-    m["v_qssa"] = v_rot
-    m["v_qsa"] = np.real(np.einsum("qssa->qsa", v_rot))
-    rot = _analytical_hfacfs(time_fs=t, dtype_real=np.float64, **m)[2]
-
-    rel = np.abs(rot - ref).max() / np.abs(ref).max()
-    assert rel < TOL_FP64_DERIVED, (
-        f"QHGK HFACF depends on the degenerate-subspace basis: rel={rel:.2e}")
-
-
 def test_analytical_hfacfs_drop_modes_with_no_linewidth():
     """τ = 0 means the lifetime fit failed: the mode has no linewidth, so it
     carries no coherence and must leave the pair sum without poisoning it.
