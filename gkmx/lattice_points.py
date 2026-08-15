@@ -5,6 +5,7 @@ import collections
 import numpy as np
 import scipy.linalg as la
 from ase.cell import Cell
+from ase.geometry import minkowski_reduce
 
 
 def get_lattice_points(cell, supercell, extended=True, tolerance=1e-5, sort=True):
@@ -148,8 +149,35 @@ def get_commensurate_q_points(cell, supercell, fractional=False, tolerance=1e-5)
     return q_points
 
 
-def get_smallest_vectors(primitive, supercell, tol=1e-5):
-    """Shortest primitive->supercell vectors with phonopy's multi-image averaging; returns (svec_frac, multi)."""
+_SHIFTS_NEAR = np.array(
+    [(i, j, k) for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1)],
+    dtype=np.float64,
+)
+# Verification shell only. Never the answer: a window wide enough to hide the
+# bug is not a fix, so the extra shell exists to prove the near one sufficed.
+_SHIFTS_WIDE = np.array(
+    [(i, j, k) for i in (-2, -1, 0, 1, 2) for j in (-2, -1, 0, 1, 2)
+     for k in (-2, -1, 0, 1, 2)],
+    dtype=np.float64,
+)
+
+
+def _fold_and_search(r_base, A_red, shifts, tol):
+    """Fold into ``A_red``, then distances to every ``shifts`` image; returns (cand, dist, n_at_min)."""
+    frac = r_base @ np.linalg.inv(A_red)
+    r_fold = (frac - np.round(frac)) @ A_red
+    cand = r_fold[:, :, None, :] + shifts[None, None, :, :]
+    dist = np.linalg.norm(cand, axis=-1)
+    at_min = dist < dist.min(axis=-1, keepdims=True) + tol
+    return cand, dist, at_min
+
+
+def get_smallest_vectors(primitive, supercell, tol=1e-5, max_bytes=128 << 20):
+    """Shortest primitive->supercell vectors with phonopy's multi-image averaging; returns (svec_frac, multi).
+
+    Follows ``ase.geometry.general_find_mic``: Minkowski-reduce the supercell
+    basis, fold the separation into it, then test only nearest images.
+    """
     N_p = len(primitive)
     N_sc = len(supercell)
 
@@ -160,30 +188,54 @@ def get_smallest_vectors(primitive, supercell, tol=1e-5):
 
     r_base = r_sc[:, None, :] - r_prim[None, :, :]
 
-    ns = np.array(
-        [(i, j, k) for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1)],
-        dtype=np.float64,
-    )
-    lattice_cart = ns @ A_sc
+    A_red, _ = minkowski_reduce(A_sc)
+    near = _SHIFTS_NEAR @ A_red
+    wide = _SHIFTS_WIDE @ A_red
 
-    candidates = r_base[:, :, None, :] + lattice_cart[None, None, :, :]
-    dist = np.linalg.norm(candidates, axis=-1)
+    block = max(1, int(max_bytes // (N_p * len(wide) * 3 * 8)))
 
-    min_dist = dist.min(axis=-1, keepdims=True)
-    mask = dist < (min_dist + tol)
-    multi = mask.sum(axis=-1).astype(np.int32)
+    multi = np.zeros((N_sc, N_p), dtype=np.int32)
+    for k0 in range(0, N_sc, block):
+        chunk = r_base[k0:k0 + block]
+        _, dist, at_min = _fold_and_search(chunk, A_red, near, tol)
+        _, dist_w, at_min_w = _fold_and_search(chunk, A_red, wide, tol)
+
+        gap = dist.min(axis=-1) - dist_w.min(axis=-1)
+        if np.any(gap > tol):
+            k, i = np.unravel_index(int(gap.argmax()), gap.shape)
+            raise RuntimeError(
+                f"get_smallest_vectors: the nearest-image window was not "
+                f"sufficient after Minkowski reduction. Supercell atom "
+                f"{k0 + k}, primitive atom {i}: got {dist.min(axis=-1)[k, i]:.6f} A "
+                f"but a wider search finds {dist_w.min(axis=-1)[k, i]:.6f} A. "
+                f"The reduced basis does not bound the search as assumed.")
+
+        n_near = at_min.sum(axis=-1)
+        n_wide = at_min_w.sum(axis=-1)
+        if np.any(n_near != n_wide):
+            k, i = np.unravel_index(int(np.argmax(n_near != n_wide)), n_near.shape)
+            raise RuntimeError(
+                f"get_smallest_vectors: image degeneracy is not contained in the "
+                f"nearest-image window. Supercell atom {k0 + k}, primitive atom "
+                f"{i}: {n_near[k, i]} tied images within +/-1, {n_wide[k, i]} "
+                f"within +/-2. The multi-image average would be taken over an "
+                f"incomplete set.")
+
+        multi[k0:k0 + block] = n_near
+
     V_max = int(multi.max())
-
     svec_cart = np.zeros((N_sc, N_p, V_max, 3), dtype=np.float64)
-    for k in range(N_sc):
-        for i in range(N_p):
-            valid = np.where(mask[k, i])[0]
-            svec_cart[k, i, : len(valid)] = candidates[k, i, valid]
+    for k0 in range(0, N_sc, block):
+        cand, _, at_min = _fold_and_search(r_base[k0:k0 + block], A_red, near, tol)
+        # Stable argsort puts the selected images first, so slot v < multi holds
+        # a real image and the rest stay zero -- same packing as the mask loop
+        # it replaces, without the per-pair Python iteration.
+        order = np.argsort(~at_min, axis=-1, kind="stable")[..., :V_max]
+        packed = np.take_along_axis(cand, order[..., None], axis=2)
+        keep = np.arange(V_max)[None, None, :] < multi[k0:k0 + block, :, None]
+        svec_cart[k0:k0 + block] = packed * keep[..., None]
 
-    A_prim_inv = np.linalg.inv(A_prim)
-    svec_frac = svec_cart @ A_prim_inv
-
-    return svec_frac, multi
+    return svec_cart @ np.linalg.inv(A_prim), multi
 
 
 def get_s2p_map(primitive, supercell, lattice_points=None, tol=1e-5):
