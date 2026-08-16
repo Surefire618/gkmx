@@ -57,7 +57,14 @@ def get_interpolation_data(dmx, lifetimes, cv, nq_max=20, quasi_harmonic_greenku
     Scales ``tau -> l = w**2 * tau`` (grid-independent), interpolates on
     the extended unit grid, sweeps ``nq = 4..nq_max``. Pass
     ``quasi_harmonic_greenkubo=True`` for the QHGK variant.
+
+    ``cv`` is passed through to the kappa kernels unchanged unless it is callable,
+    in which case it is called as ``cv(solution)`` on each mesh.
     """
+    def heat_capacity(solution):
+        """A callable cv follows the mesh; a scalar or array is used as given."""
+        return cv(solution) if callable(cv) else cv
+
     l_qs = dmx.w2_qs * np.nan_to_num(lifetimes)
 
     try:
@@ -78,10 +85,11 @@ def get_interpolation_data(dmx, lifetimes, cv, nq_max=20, quasi_harmonic_greenku
     if quasi_harmonic_greenkubo:
         kappa_ha = get_kappa_QHGK(
             v_qssa=dmx.solution.v_qssa_cartesian, tau_qs=lifetimes,
-            w_qs=dmx.w_qs, w_inv_qs=dmx.w_inv_qs, cv_qs=cv,
+            w_qs=dmx.w_qs, w_inv_qs=dmx.w_inv_qs, cv_qs=heat_capacity(dmx.solution),
         )
     else:
-        kappa_ha = get_kappa_BTE(dmx.v_qsa_cartesian, tau_qs=lifetimes, cv_qs=cv)
+        kappa_ha = get_kappa_BTE(dmx.v_qsa_cartesian, tau_qs=lifetimes,
+                                 cv_qs=heat_capacity(dmx.solution))
 
     nqs = np.arange(4, nq_max + 1, 2)
     Nq_init = len(dmx.q_points)
@@ -101,14 +109,15 @@ def get_interpolation_data(dmx, lifetimes, cv, nq_max=20, quasi_harmonic_greenku
         tau_int = ir_l[grid.ir.map2full] * solution.w_inv_qs ** 2
 
         Nq_eff = len(grid.points) / Nq_init
-        KK = get_kappa_BTE(solution.v_qsa_cartesian, tau_int, cv) / Nq_eff
+        cv_mesh = heat_capacity(solution)
+        KK = get_kappa_BTE(solution.v_qsa_cartesian, tau_int, cv_mesh) / Nq_eff
         Ks[ii] = np.asarray(KK)
         _talk(f"nq={nq:3d}, Nq_eff={Nq_eff:6.2f}, kappa={np.diagonal(KK).mean():.3f} W/mK")
 
         if quasi_harmonic_greenkubo:
             KK_Q = get_kappa_QHGK(
                 v_qssa=solution.v_qssa_cartesian, tau_qs=tau_int,
-                w_qs=solution.w_qs, w_inv_qs=solution.w_inv_qs, cv_qs=cv,
+                w_qs=solution.w_qs, w_inv_qs=solution.w_inv_qs, cv_qs=cv_mesh,
             ) / Nq_eff
             Ks_QHGK[ii] = np.asarray(KK_Q)
             _talk(f"nq={nq:3d}, kappa_QHGK={np.diagonal(KK_Q).mean():.3f} W/mK")

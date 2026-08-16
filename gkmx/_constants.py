@@ -14,6 +14,7 @@ PICO = 1e-12  # s
 FEMTO = 1e-3 * PICO
 THZ = 1 / PICO
 BOLTZMANN = units._k
+HBAR = units._hbar
 
 omega_to_THz = (EV / AA**2 / AMU) ** 0.5 / THZ / 2 / pi   # ~15.633  (gkmx w -> THz)
 omega_to_rad_fs = (EV / AA**2 / AMU) ** 0.5 * FEMTO       # ~0.098227 (gkmx w -> rad/fs)

@@ -136,6 +136,40 @@ def get_kappa_QHGK(v_qssa, tau_qs, w_qs, w_inv_qs, cv_qs=None, weights=None,
 
 
 
+def get_harmonic_cv(w_qs, temperature, quantum=False, w_tol=1e-8):
+    """Harmonic heat capacity per mode, in eV/K.
+
+        classical (default)   cv = kB                              equipartition
+        quantum               cv = kB x**2 exp(x) / (exp(x) - 1)**2
+                              with x = hbar w / (kB T)
+
+    Args:
+        w_qs: ``(Nq, Ns)`` frequencies in gkmx-native units (ASE, no 2 pi).
+        temperature: in K. Unused in the classical branch, which is
+            temperature-independent; still required so the two are interchangeable.
+        quantum: Bose-Einstein populations instead of equipartition.
+        w_tol: frequencies at or below this return ``cv = 0``.
+
+    Returns:
+        ``(Nq, Ns)`` heat capacity per mode in eV/K.
+    """
+    w_qs = np.asarray(w_qs)
+    kB_eV = C.BOLTZMANN / C.EV
+    is_real_mode = w_qs > w_tol
+
+    if not quantum:
+        return np.where(is_real_mode, kB_eV, 0.0)
+
+    omega_rad_s = w_qs * (C.omega_to_rad_fs / C.FEMTO)
+    x = C.HBAR * omega_rad_s / (C.BOLTZMANN * float(temperature))
+
+    # expm1 rather than exp(x) - 1: x is ~1e-3 for soft modes at high T, where
+    # the naive difference loses most of its significant digits.
+    x_safe = np.where(is_real_mode, x, 1.0)
+    cv = kB_eV * x_safe ** 2 * np.exp(x_safe) / np.expm1(x_safe) ** 2
+    return np.where(is_real_mode, cv, 0.0)
+
+
 def symmetrize_kappa(kappa_ab, primitive, symprec=1e-5):
     """Project a conductivity tensor onto the crystal point group.
 
