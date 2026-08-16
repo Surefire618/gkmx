@@ -9,7 +9,6 @@ from ase import io as ase_io
 
 from gkmx.dynamical_matrix import DynamicalMatrix
 from gkmx.io import parse_force_constants
-from gkmx.phonon import _symmetrize_v_site
 
 from .._tolerances import TOL_FP64, TOL_FP64_DERIVED
 
@@ -128,14 +127,30 @@ def test_jax_and_numpy_agree_with_reference(backend, setup):
     assert np.abs(v2 - v2_ref).max() \
         / max(np.abs(v2_ref).max(), 1e-30) < TOL_FP64_DERIVED
 
-    # `diag(v_qssa)` is no longer `v_qsa`: `v_qsa` carries the site-symmetrization
-    # (phonopy-canonical, and correct for the diagonal) while `v_qssa` does not,
-    # because the Cartesian-only average sets Gamma(R, q) = 1 and corrupts the
-    # velocity operator off the diagonal. The two are still tied exactly -- one
-    # is the site average of the other -- which pins both paths at once.
-    diag = np.einsum("qssa->qsa", d.solution.v_qssa_cartesian).real
-    recip = np.linalg.inv(np.asarray(prim.cell))
-    sym = _symmetrize_v_site(diag, d.q_points, d._phonon._symm_rots_frac, recip)
-    live = np.abs(d.v_qsa_cartesian).sum(axis=-1) > 0    # v_qsa zeroes sub-threshold modes
-    assert np.abs(sym[live] - np.asarray(d.v_qsa_cartesian)[live]).max() \
-        / max(np.abs(d.v_qsa_cartesian).max(), 1e-30) < TOL_FP64
+
+@pytest.mark.parametrize("fixture", [
+    "CuI_aiGK", "KI_B2_MLIP",
+    "phonopy_AgErTe2", "phonopy_Li2ZnGeO4", "phonopy_LiCdBO3", "phonopy_Mg2YbSb2",
+    "phonopy_NaCl", "phonopy_RbIn3F10", "phonopy_Si", "phonopy_SrTiO3",
+    "tdep_Ga2O3_kappa", "tdep_KI_bcc", "tdep_KPTe2", "tdep_Rb2O",
+])
+def test_velocity_matrix_diagonal_is_group_velocity(fixture):
+    """``diag(v_qssa) == v_qsa``: the same matrix element over the same
+    denominator, and by Hellmann-Feynman the group velocity itself."""
+    d = Path(__file__).parent.parent / "datasets" / fixture
+    if (d / "force_constants.npz").exists():
+        fc = np.load(d / "force_constants.npz")["force_constants"]
+    else:
+        fc = np.asarray(parse_force_constants(
+            str(d / "FORCE_CONSTANTS_tdep"), two_dim=False))
+    dmx = DynamicalMatrix(
+        force_constants=fc,
+        primitive=ase_io.read(str(d / "geometry.in.primitive"), format="aims"),
+        supercell=ase_io.read(str(d / "geometry.in.supercell"), format="aims"),
+        with_group_velocity_matrices=True, backend="numpy", precision="fp64")
+
+    diag = np.einsum("qssa->qsa", dmx.solution.v_qssa_cartesian).real
+    v_qsa = np.asarray(dmx.v_qsa_cartesian)
+    live = np.abs(v_qsa).sum(axis=-1) > 0        # v_qsa zeroes sub-threshold modes
+    assert np.abs(diag[live] - v_qsa[live]).max() \
+        / max(np.abs(v_qsa).max(), 1e-30) < TOL_FP64
