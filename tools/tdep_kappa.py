@@ -28,8 +28,7 @@ from gkmx._log import talk, warn
 from gkmx.brillouin import get_q_grid
 from gkmx.interpolation import get_interpolation_data
 from gkmx.io import parse_force_constants
-from gkmx.kappa import (get_harmonic_cv, get_kappa_BTE, get_kappa_QHGK,
-                        symmetrize_kappa)
+from gkmx.kappa import get_harmonic_cv, get_kappa_BTE, get_kappa_QHGK, symmetrize_kappa
 
 BOHR = 1.8897261246257702      # Bohr^-1 -> A^-1, TDEP's 2pi-free q convention
 EV = 1.602176634e-19           # J per eV
