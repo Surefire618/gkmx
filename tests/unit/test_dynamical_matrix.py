@@ -9,6 +9,7 @@ from ase import io as ase_io
 
 from gkmx.dynamical_matrix import DynamicalMatrix
 from gkmx.io import parse_force_constants
+from gkmx.phonon import CONVENTIONS
 
 from .._tolerances import TOL_FP64, TOL_FP64_DERIVED
 
@@ -30,10 +31,14 @@ def setup():
 @pytest.fixture(scope="module")
 def dmx(setup):
     prim, sc, fc, _ = setup
-    # the checked-in DynamicalMatrix.nc reference predates ASR enforcement
+    # PHONO3PY: the spectral-resolution identity below compares against the
+    # remapped FC in the smallest-vector gauge, so e_qsI must be in that
+    # gauge (TDEP's carries the per-atom Bloch phases and reconstructs a
+    # phase-twisted supercell D). The w/v comparisons against the TDEP-baked
+    # cache are convention-free on the projected (symmetric) FC.
     return DynamicalMatrix(force_constants=fc, primitive=prim, supercell=sc,
-                           enforce_translational_invariance=False,
-                           with_group_velocity_matrices=True)
+                           with_group_velocity_matrices=True,
+                           convention="PHONO3PY")
 
 
 def test_shapes_invariants_and_reference(dmx, setup):
@@ -116,7 +121,6 @@ def test_jax_and_numpy_agree_with_reference(backend, setup):
     free)."""
     prim, sc, fc, ref = setup
     d = DynamicalMatrix(force_constants=fc, primitive=prim, supercell=sc,
-                        enforce_translational_invariance=False,
                         with_group_velocity_matrices=True, backend=backend)
     w_ref = np.sort(np.asarray(ref["w_qs"].data).flatten())
     assert np.abs(np.sort(d.w_qs.flatten()) - w_ref).max() \
@@ -134,12 +138,15 @@ def test_jax_and_numpy_agree_with_reference(backend, setup):
     "phonopy_NaCl", "phonopy_RbIn3F10", "phonopy_Si", "phonopy_SrTiO3",
     "tdep_Ga2O3_kappa", "tdep_KI_bcc", "tdep_KPTe2", "tdep_Rb2O",
 ])
-def test_velocity_matrix_diagonal_is_group_velocity(fixture):
+@pytest.mark.parametrize("convention", CONVENTIONS)
+def test_velocity_matrix_diagonal_is_group_velocity(fixture, convention):
     """``diag(v_qssa) == v_qsa``: the same matrix element over the same
     denominator, and by Hellmann-Feynman the group velocity itself."""
     d = Path(__file__).parent.parent / "datasets" / fixture
     if (d / "force_constants.npz").exists():
         fc = np.load(d / "force_constants.npz")["force_constants"]
+    elif (d / "force_constants.npy").exists():
+        fc = np.load(d / "force_constants.npy")
     else:
         fc = np.asarray(parse_force_constants(
             str(d / "FORCE_CONSTANTS_tdep"), two_dim=False))
@@ -147,10 +154,28 @@ def test_velocity_matrix_diagonal_is_group_velocity(fixture):
         force_constants=fc,
         primitive=ase_io.read(str(d / "geometry.in.primitive"), format="aims"),
         supercell=ase_io.read(str(d / "geometry.in.supercell"), format="aims"),
-        with_group_velocity_matrices=True, backend="numpy", precision="fp64")
+        with_group_velocity_matrices=True, backend="numpy", precision="fp64",
+        convention=convention)
 
-    diag = np.einsum("qssa->qsa", dmx.solution.v_qssa_cartesian).real
+    v_qssa = np.asarray(dmx.solution.v_qssa_cartesian)
+    diag = np.einsum("qssa->qsa", v_qssa).real
     v_qsa = np.asarray(dmx.v_qsa_cartesian)
     live = np.abs(v_qsa).sum(axis=-1) > 0        # v_qsa zeroes sub-threshold modes
-    assert np.abs(diag[live] - v_qsa[live]).max() \
-        / max(np.abs(v_qsa).max(), 1e-30) < TOL_FP64
+    delta = np.abs(diag[live] - v_qsa[live]).max()
+    # Operator-scale denominator: on all-TRIM commensurate grids time reversal
+    # forces every diagonal gv to exactly zero, so max|v_qsa| is machine noise
+    # and a v_qsa-normalized metric measures noise/noise (Si, RbIn3F10,
+    # Li2ZnGeO4, Ga2O3 read as 0.1..1e12 "violations" that way while e.g.
+    # RbIn3F10 actually satisfies the identity at 2.8e-15 of its 1.78 A/fs
+    # operator). Where the whole operator is numerically zero too (Si's gvm
+    # is 8e-17 on its 2x2x2 grid) nothing physical exists to normalize by,
+    # and the identity is asserted at absolute noise instead; 1e-12 A/fs is
+    # a physical-zero classifier (~1e-10 of typical velocity scales), not an
+    # agreement tolerance.
+    scale = max(np.abs(v_qsa).max(), float(np.abs(v_qssa).max()))
+    if scale < 1e-12:
+        assert delta < 1e-12, f"noise-level identity broken: {delta:.2e} A/fs"
+    else:
+        assert delta / scale < TOL_FP64, (
+            f"diag(v_qssa) != v_qsa: {delta:.2e} A/fs = {delta/scale:.2e} of "
+            f"the operator scale {scale:.2e}")

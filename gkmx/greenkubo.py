@@ -243,8 +243,9 @@ def compute_cv_tau(dataset, dmx, stride=1, t_chunk=5000, mode_block=None,
     """Mode heat capacities and lifetimes from an MD trajectory.
 
     Always uses the full-trajectory FFT ACF (Wiener-Khinchin); time-axis
-    chunking of the autocorrelation is biased at every lag (Bartlett
-    triangle) — see memory/feedback_physics_first_then_perf.md.
+    chunking of the autocorrelation is biased at every lag inside the chunk
+    (Bartlett triangle: <g_est(tau)> = g(tau) (1 - |tau|/L)), so the
+    threshold-crossing tau depends on L, not the physics.
 
     Args:
         dataset: trajectory ``xr.Dataset`` carrying ``displacements`` and
@@ -326,7 +327,7 @@ def compute_cv_tau(dataset, dmx, stride=1, t_chunk=5000, mode_block=None,
     m = np.asarray(_masses.of(dmx.supercell)).astype(dtype_u)
     m_sqrt = np.sqrt(m).astype(dtype_u)
 
-    # Full-trajectory ACF only — see docstring + `feedback_physics_first_then_perf.md`.
+    # Full-trajectory ACF only — see the Bartlett-bias note in the docstring.
     tau_max_eff = Nt
     nfft = bk.next_fast_len(2 * Nt)
 
@@ -698,7 +699,8 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
               lifetime_fit_cutoff=0.5,
               correct_finite_time=True,
               enforce_translational_invariance=True,
-              convention="PHONOPY"):
+              enforce_space_group=True,
+              convention="TDEP"):
     """Run the full Green-Kubo thermal-conductivity pipeline on an MD trajectory.
 
     The pipeline:
@@ -756,7 +758,10 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
             finite-time correction. Affects long-lifetime modes only.
         enforce_translational_invariance: impose the acoustic sum rule on the
             force constants before solving; see ``Phonon``. Default ``True``.
-        convention: ``"PHONOPY"`` (default) or ``"TDEP"``; see
+        enforce_space_group: project the force constants onto the
+            space-group-invariant subspace before solving; see ``Phonon``.
+            Default ``True``.
+        convention: ``"TDEP"`` (default), ``"PHONO3PY"``, or ``"RAW"``; see
             ``gkmx.phonon.CONVENTIONS``. The eigenvectors enter the mode
             projection, so tau and cv move with it and kappa_BTE moves too, not
             only kappa_QHGK. The raw HFACF kappa never sees it.
@@ -793,8 +798,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
         dataset = dataset.assign_coords({keys.time: dataset[keys.time].astype(p.real)})
 
     # heat_flux must be eV/(Å²·fs); ps-base vibes/gkx fixtures must be
-    # divided by 1000 at fixture creation, NOT here. See
-    # memory/feedback_vibes_heat_flux_unit_convention.md.
+    # divided by 1000 at fixture creation, NOT here.
 
     primitive = Atoms(**json.loads(dataset.attrs[keys.reference_primitive]))
     supercell = Atoms(**json.loads(dataset.attrs[keys.reference_supercell]))
@@ -860,6 +864,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
             force_constants=np.asarray(fc), primitive=primitive, supercell=supercell,
             with_group_velocity_matrices=True, backend=backend, precision=p.name,
             enforce_translational_invariance=enforce_translational_invariance,
+            enforce_space_group=enforce_space_group,
             convention=convention,
         )
         if dmx_path:
@@ -874,6 +879,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
             force_constants=fc, primitive=primitive, supercell=supercell,
             with_group_velocity_matrices=True, backend=backend, precision=p.name,
             enforce_translational_invariance=enforce_translational_invariance,
+            enforce_space_group=enforce_space_group,
             convention=convention,
         )
         if dmx_path:
@@ -1062,7 +1068,8 @@ def _get_gk_interpolate(dataset, dmx=None, interpolate=False,
     timer()
 
     # Free anharmonic tensors for the cuFFT planner workspace; never
-    # call jax.clear_caches() — see memory/feedback_jax_clear_caches.md.
+    # call jax.clear_caches() — it evicts compiled binaries, not memory,
+    # and slows interpolation 30-40 %.
     gc.collect()
 
     timer = Timer(f"compute_cv_tau ({backend} [{get_backend(backend).device_description()}])",

@@ -47,11 +47,23 @@ TOL_KAPPA_PIN = 1e-4
 #     rounding one on identical arithmetic. It is a convergence artifact and
 #     shrinks with trajectory length (KI Gamma triple: 2.98x spread over 4 ps,
 #     1.17x over 100 ps), so this band is sized for the 4 ps fixture, not for
-#     production runs. Measured 5.2e-05 (backends), 9.8e-05 (precisions), 1.3e-04
-#     on CI with a different jax build. Multiplet averaging in `compute_cv_tau`
-#     suppresses it but cannot remove it — tau is a nonlinear fit and cv a
-#     4th-order moment, so neither has an invariant multiplet mean. Do not
-#     tighten without first taking the fit on the invariant trace of g.
+#     production runs. Re-measured 2026-08-17 after enforce_space_group
+#     (default ON) removed the MLIP FC's 6.9 % symmetry residual and thereby
+#     restored EXACT multiplets on this fixture — the basis freedom the band
+#     describes is now fully active where the asymmetry used to split it:
+#     fp64 backends 1.1e-3, fp32-vs-fp64 3.8e-3, fp32 backends 1.5e-2. Band
+#     = 1.3x the worst. Multiplet averaging in `compute_cv_tau` suppresses
+#     it but cannot remove it — tau is a nonlinear fit and cv a 4th-order
+#     moment, so neither has an invariant multiplet mean. Do not tighten
+#     without first taking the fit on the invariant trace of g.
 TOL_FP32_VS_FP64 = 1e-6
 TOL_NUMPY_VS_JAX = 1e-6
-TOL_DEGENERATE_BASIS = 1e-3
+TOL_DEGENERATE_BASIS = 2e-2
+
+# Per-(q, degenerate-block) row power of v_qssa across precisions: the
+# gauge-invariant resolution of fp32-vs-fp64 for the velocity operator
+# (raw elements differ O(1) across precisions because eigh lands in
+# different intra-block bases). Measured 7.3e-7..9.1e-7 on KI_B2_MLIP over
+# all three conventions; ~11x margin, and the fp32 acoustic-gate bug this
+# guards against inflated the quantity 5-38x.
+TOL_FP32_BLOCK_POWER = 1e-5

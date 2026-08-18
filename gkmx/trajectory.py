@@ -13,8 +13,7 @@ from . import masses as _masses
 from .io import json2atoms
 
 # gkmx internals expect heat_flux in eV/(Å²·fs). Vibes / legacy-gkx writers
-# emit eV/(Å²·ps) — silent 1e6 error in κ if not converted. See
-# memory/feedback_vibes_heat_flux_unit_convention.md.
+# emit eV/(Å²·ps) — silent 1e6 error in κ if not converted.
 _UNITS_FS = ("/fs", " fs", "·fs", "*fs", "per fs", "femtosecond")
 _UNITS_PS = ("/ps", " ps", "·ps", "*ps", "per ps", "picosecond")
 

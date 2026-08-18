@@ -160,7 +160,7 @@ def test_qhgk_invariant_under_intra_multiplet_rotation(solution):
 
     # TOL_FP64, not TOL_FP64_DERIVED: the multiplets here are degenerate to
     # 1.9e-16, so tau_eff is exactly constant over each block and the deviation
-    # is machine precision (measured 8.1e-16 PHONOPY / 1.8e-15 TDEP). At 1e-6 a
+    # is machine precision (measured 1.8e-15 worst across the convention set). At 1e-6 a
     # genuine 1e-5 violation would pass.
     base = np.asarray(get_kappa_QHGK(v, tau, w, w_inv, cv).data)
     for seed in range(NSEED):

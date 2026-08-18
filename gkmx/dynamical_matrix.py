@@ -13,7 +13,7 @@ from .lattice_points import (
     get_s2p_map,
     map_I_to_iL,
 )
-from .phonon import Phonon, Solution, SolutionWithGVM
+from .phonon import CONVENTIONS, Phonon, Solution, SolutionWithGVM
 from .precision import Precision
 
 
@@ -151,7 +151,8 @@ class DynamicalMatrix:
     def __init__(self, force_constants, primitive, supercell,
                  with_group_velocity_matrices=False, backend="numpy",
                  precision="fp64", enforce_translational_invariance=True,
-                 convention="PHONOPY"):
+                 enforce_space_group=True,
+                 convention="TDEP"):
         """Build the adapter and solve on the commensurate q-grid.
 
         Args:
@@ -176,14 +177,11 @@ class DynamicalMatrix:
                 constants exactly as supplied, at the cost of Gamma acoustics
                 that do not sit at zero and a ``1/w`` that leaks into every
                 ``1/w``-weighted mode sum.
-            convention: ``"PHONOPY"`` (default) or ``"TDEP"``. Same frequencies
-                and diagonal group velocity either way; eigenvectors and
-                ``v_qssa`` off the diagonal differ. See
-                ``gkmx.phonon.CONVENTIONS``.
+            convention: ``"TDEP"`` (default), ``"PHONO3PY"``, or ``"RAW"``.
+                Frequencies are identical in all three; the degenerate
+                multiplet basis, ``v_qsa`` inside multiplets, and ``v_qssa``
+                off the diagonal are what the convention decides.
         """
-        self.primitive = primitive.copy()
-        self.supercell = supercell.copy()
-
         Np, Na = len(primitive), len(supercell)
         fc = np.asarray(force_constants)
         if fc.shape != (Np, Na, 3, 3):
@@ -193,24 +191,30 @@ class DynamicalMatrix:
                 "or reshape yourself before calling DynamicalMatrix."
             )
 
-        self._fc_phonopy = fc.copy()
         self._backend = backend
         self._precision = precision
         p = Precision.from_str(precision)
         self._dtype_real, self._dtype_complex = p.real, p.complex
 
         self._convention = convention
-        self._setup_lattice_and_grid(primitive, supercell)
 
         self._phonon = Phonon(
-            force_constants=self._fc_phonopy,
-            primitive=self.primitive,
-            supercell=self.supercell,
+            force_constants=fc,
+            primitive=primitive,
+            supercell=supercell,
             backend=backend,
             precision=precision,
             enforce_translational_invariance=enforce_translational_invariance,
+            enforce_space_group=enforce_space_group,
             convention=convention,
         )
+        # adopt geometry and FC as solved (refined if requested / ASR + space-group
+        # projection applied), so every map, grid, phase and harmonic-force
+        # consumer this adapter builds agrees with the eigensolution
+        self.primitive = self._phonon.primitive.copy()
+        self.supercell = self._phonon.supercell.copy()
+        self._setup_lattice_and_grid(self.primitive, self.supercell)
+        self._fc_phonopy = np.asarray(self._phonon.force_constants)
         self._solution = self._phonon.solve(
             q_points_frac=self._q_grid.points,
             with_velocities=True,
@@ -337,12 +341,16 @@ class DynamicalMatrix:
 
     def _ensure_phonon(self):
         if self._phonon is None:
+            # `_fc_phonopy` is the FC as solved: ASR and the space-group
+            # projection are already baked in.
             self._phonon = Phonon(
                 force_constants=self._fc_phonopy,
                 primitive=self.primitive,
                 supercell=self.supercell,
                 backend=self._backend,
                 precision=self._precision,
+                enforce_translational_invariance=False,
+                enforce_space_group=False,
                 convention=self._convention,
             )
         return self._phonon
@@ -433,6 +441,7 @@ class DynamicalMatrix:
         ds.attrs["reference_primitive_json"] = atoms2json(self.primitive)
         ds.attrs["reference_supercell_json"] = atoms2json(self.supercell)
         ds.attrs["precision"] = self._precision
+        ds.attrs["convention"] = self._convention
 
         ds[keys.q_points] = xr.DataArray(self.q_grid.points, dims=keys.q_a)
         ds[keys.fc_phonopy] = xr.DataArray(self._fc_phonopy, dims=keys.dim_fc_phonopy)
@@ -493,7 +502,11 @@ class DynamicalMatrix:
         obj._fc_phonopy = np.asarray(ds[keys.fc_phonopy].data)
         obj._backend = backend
         obj._precision = precision
-        obj._convention = "PHONOPY"
+        obj._convention = str(ds.attrs.get("convention", "TDEP")).upper()
+        if obj._convention not in CONVENTIONS:
+            raise ValueError(
+                f"cache carries unknown convention {obj._convention!r}; "
+                f"valid: {CONVENTIONS}")
         obj._dtype_real = dtype_real
         obj._dtype_complex = dtype_complex
 

@@ -9,9 +9,9 @@ KAPPA_RAW_REF = 0.11722172
 KAPPA_RAW_TOL = 1e-6
 
 # Cubic average of `thermal_conductivity_corrected` (size-extrapolated), W/mK.
-KAPPA_CORRECTED_REF = 0.44318744
-KAPPA_CORRECTED_TOL = 5e-5
+KAPPA_CORRECTED_REF = 0.43237908
+KAPPA_CORRECTED_TOL = 2e-3
 
 # Anharmonicity score: std(f_DFT - f_harmonic) / std(f_DFT).
-SIGMA_REF = 0.40990110
+SIGMA_REF = 0.41309856
 SIGMA_TOL = 1e-6

@@ -108,10 +108,13 @@ def _run_phonopy(ph, q):
 
 
 def _run_gkmx(si, q):
-    # matches phonopy.load(symmetrize_fc=False) on the reference side
+    # matches phonopy.load(symmetrize_fc=False) on the reference side;
+    # PHONO3PY is the phonopy-family convention (probe rotation + site average)
     sol = Phonon(si["fc"], si["prim"], si["sc"], backend="numpy",
                  enforce_translational_invariance=False,
-                 factor=si["factor"]).solve(q, with_velocities=True)
+                 enforce_space_group=False,
+                 factor=si["factor"], convention="PHONO3PY").solve(
+        q, with_velocities=True)
     return (
         np.asarray(sol.w_qs) * C.omega_to_THz,                     # f (Nq, Ns)
         np.moveaxis(np.asarray(sol.e_qsi), -1, -2),                # e column layout (Nq, Ns, Ns)

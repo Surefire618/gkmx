@@ -29,6 +29,7 @@ from gkmx.brillouin import get_q_grid
 from gkmx.interpolation import get_interpolation_data
 from gkmx.io import parse_force_constants
 from gkmx.kappa import get_harmonic_cv, get_kappa_BTE, get_kappa_QHGK, symmetrize_kappa
+from gkmx.phonon import CONVENTIONS
 
 BOHR = 1.8897261246257702      # Bohr^-1 -> A^-1, TDEP's 2pi-free q convention
 EV = 1.602176634e-19           # J per eV
@@ -215,7 +216,7 @@ def load(run_dir, grid_file=None):
         raise ValueError(
             f"{run_dir}: the first q-point is not Gamma. The acoustic w_inv cutoff "
             "is a batch order statistic and changes silently without Gamma in the "
-            "batch (memory/project_get_solution_not_batch_invariant.md).")
+            "batch.")
 
     kappa_ref, ref_channel = load_thermal_conductivity(
         run_dir / "outfile.thermal_conductivity", temperature)
@@ -390,7 +391,7 @@ def main(argv=None):
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("run_dirs", nargs="+")
-    parser.add_argument("--convention", choices=("TDEP", "PHONOPY"), default="TDEP")
+    parser.add_argument("--convention", choices=CONVENTIONS, default="TDEP")
     parser.add_argument("--grid-file", default=None,
                         help="override the grid hdf5 (sweeps ship several)")
     parser.add_argument("--extrapolate", action="store_true")

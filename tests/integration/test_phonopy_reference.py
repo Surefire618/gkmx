@@ -74,8 +74,12 @@ def _solve(fixture_name):
     # The references are generated with phonopy's own symmetrize_fc=False, so
     # both sides must consume the raw force constants for this to compare
     # solvers rather than preprocessing.
+    # PHONO3PY is the phonopy-family convention: probe rotation + site
+    # average, matching the frozen phonopy references bit-level on gv.
     sol = Phonon(fc, prim, sc, backend="numpy", factor=factor,
-                 enforce_translational_invariance=False).solve(
+                 enforce_translational_invariance=False,
+                 enforce_space_group=False,
+                 convention="PHONO3PY").solve(
         np.asarray(ref["q_points"]),
         with_velocities=True, with_group_velocity_matrices=True,
     )

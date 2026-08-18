@@ -38,6 +38,7 @@ from gkmx.phonon import (
     Phonon,
     _numpy_solve,
     _rotate_degenerate_subspaces,
+    degenerate_sets,
     symmetrize_v_qssa,
 )
 from gkmx.tdep import to_tdep_convention
@@ -161,6 +162,8 @@ def test_velocity_operator(fixture):
         raw[iq] = np.moveaxis(M * (0.5 * s[:, None] * s[None, :])[None], 0, -1) \
             * C.gv_to_AA_fs
 
+    # No w_qs= on purpose: this reproduces TDEP's own output, and kronegv
+    # does no frequency-block projection. The library path passes w_qs.
     v = symmetrize_v_qssa(raw, e_tdep, q, prim)
     target = ref["velocity_offdiagonal"]
     # gkmx stores v_ss' where TDEP stores v_s's -- equivalently its conjugate,
@@ -174,15 +177,46 @@ def test_velocity_operator(fixture):
 
 
 
-def _degenerate_pair_mask(w):
-    """(nd, deg) boolean masks over mode pairs, per q."""
-    nq, ns = w.shape
-    nd = np.zeros((nq, ns, ns), dtype=bool)
-    for iq in range(nq):
-        single = np.array(
-            [np.sum(np.abs(w[iq] - wi) < DEGENERACY_TOL) == 1 for wi in w[iq]])
-        nd[iq] = single[:, None] & single[None, :]
-    return nd, ~nd
+def _block_bilinear(v_qssa, w_qs):
+    """``B^ab_IJ(q) = sum_{s in I, s' in J} v^a_ss' v^b_s's`` over degenerate blocks.
+
+    Blocks are the multiplets of ``degenerate_sets`` plus every non-degenerate
+    mode as its own singleton, so on singleton pairs B is the per-element
+    phase-invariant bilinear (nothing summed) and on multiplet pairs it is the
+    degenerate average -- the finest quantity invariant under the gauge eigh
+    leaves. Test-only: no core function consumes it.
+
+    Returns ``(B, block_index)`` with ``B`` a per-q list of ``(nb, nb, 3, 3)``
+    and ``block_index`` a ``(Nq, Ns)`` block label per mode.
+    """
+    v = np.asarray(v_qssa)
+    w = np.asarray(w_qs)
+    Nq, Ns = w.shape
+    multiplets = [[] for _ in range(Nq)]
+    for qi, start, stop in degenerate_sets(w):
+        multiplets[qi].append((start, stop))
+
+    block_index = np.zeros((Nq, Ns), dtype=np.int64)
+    B = []
+    for qi in range(Nq):
+        bq, pos = [], 0
+        for start, stop in multiplets[qi]:          # ascending by construction
+            bq.extend((s, s + 1) for s in range(pos, start))
+            bq.append((start, stop))
+            pos = stop
+        bq.extend((s, s + 1) for s in range(pos, Ns))
+        for bi, (i0, i1) in enumerate(bq):
+            block_index[qi, i0:i1] = bi
+
+        nb = len(bq)
+        Bq = np.empty((nb, nb, 3, 3), dtype=v.dtype)
+        vq = v[qi]
+        for bi, (i0, i1) in enumerate(bq):
+            for bj, (j0, j1) in enumerate(bq):
+                Bq[bi, bj] = np.einsum("ija,jib->ab",
+                                       vq[i0:i1, j0:j1, :], vq[j0:j1, i0:i1, :])
+        B.append(Bq)
+    return B, block_index
 
 
 def _v_own_eigenvectors(ref, prim, sc, fc):
@@ -201,79 +235,69 @@ def _v_own_eigenvectors(ref, prim, sc, fc):
     return (np.asarray(sol.v_qssa_cartesian), np.abs(np.asarray(sol.w_qs)))
 
 
-def test_velocity_operator_squared_no_tdep_eigenvectors(fixture):
-    """``|v_ss'|^2`` element by element, from gkmx's own eigenvectors.
+def test_velocity_operator_blockwise_no_tdep_eigenvectors(fixture):
+    """``v_ss'`` vs TDEP from gkmx's own eigenvectors, split by block structure.
 
-    Squaring removes the per-mode phase exactly, so where that is the only
-    freedom -- both modes non-degenerate -- gkmx reproduces TDEP with no
-    eigenvector imported and nothing summed. Measured 5.9e-10 to 3.2e-09 over
-    392 / 783 / 4089 pairs.
+    Element-by-element agreement of ``v_ss'`` across two codes is impossible:
+    eigh and zheev land in different gauges -- a phase per mode, a unitary per
+    degenerate multiplet. What IS comparable is ``block_bilinear``'s
+    ``B^ab_IJ = sum_{s in I, s' in J} v^a_ss' v^b_s's``, and it implements
+    both halves of the comparison in one object:
 
-    It does not hold when either mode is degenerate (5.7e-02 to 6.0e-01): there
-    the two codes differ by a unitary inside the multiplet, not a phase (the
-    overlap is block diagonal and unitary to 1e-15, with permutation deviation
-    0.23 to 0.35), and ``|v|^2`` is not invariant under that. Those pairs are
-    covered by the blocked tensor below.
+    * OUTSIDE the multiplets both blocks are singletons, so ``B`` is the
+      per-pair bilinear ``v^a_ss' conj(v^b_ss')`` -- element by element,
+      phase-invariant, nothing summed: q, s, s', a, b all stay resolved.
+    * INSIDE / touching a multiplet only the block-contracted degenerate
+      average is defined, and that is what ``B`` is there.
+
+    Compared complex against the conjugate (TDEP stores ``v_s's``), so the
+    imaginary part rides along as the conjugation fingerprint. Asserted in
+    two parts so a regression names the part it broke. Measured 4.7e-10 to
+    1.9e-09 on both parts across the three fixtures.
     """
     name, _, ref, prim, sc, fc = fixture
     v, w = _v_own_eigenvectors(ref, prim, sc, fc)
-    target = ref["velocity_offdiagonal"]
-    nd, deg = _degenerate_pair_mask(w)
+    target = np.asarray(ref["velocity_offdiagonal"])
 
-    assert nd.sum() > 0, f"{name}: no non-degenerate pairs; the test is vacuous"
-    d = np.abs(np.abs(v) ** 2 - np.abs(target) ** 2).max(axis=-1)
-    scale = (np.abs(target) ** 2).max()
-    rel = d[nd].max() / scale
-    assert rel < TOL_TDEP, (
-        f"{name}: |v_ss'|^2 on non-degenerate pairs rel={rel:.2e}")
+    B_gkmx, block_index = _block_bilinear(v, w)
+    B_tdep, _ = _block_bilinear(target, w)
+    scale = max(np.abs(Bq).max() for Bq in B_tdep)
 
-    # Guard: if the degenerate pairs ever agreed too, the split would be
-    # meaningless and this test would be silently weaker than it looks.
-    if deg.sum():
-        assert d[deg].max() / scale > 1e-3, (
-            f"{name}: degenerate pairs agree elementwise ({d[deg].max()/scale:.2e}); "
-            f"the multiplet basis no longer differs, so revisit this split")
+    n_single = n_multi = 0
+    worst_single = worst_multi = 0.0
+    for iq in range(len(w)):
+        sizes = np.bincount(block_index[iq])
+        single = (sizes[:, None] == 1) & (sizes[None, :] == 1)
+        d = np.abs(B_gkmx[iq] - np.conj(B_tdep[iq]))
+        n_single += int(single.sum())
+        n_multi += int((~single).sum())
+        if single.any():
+            worst_single = max(worst_single, d[single].max())
+        if (~single).any():
+            worst_multi = max(worst_multi, d[~single].max())
 
+    assert n_single > 0 and n_multi > 0, (
+        f"{name}: block structure degenerate ({n_single} singleton / "
+        f"{n_multi} multiplet block pairs); one half of this test is vacuous")
+    assert worst_single / scale < TOL_TDEP, (
+        f"{name}: element-wise v bilinear outside multiplets rel="
+        f"{worst_single/scale:.2e}")
+    assert worst_multi / scale < TOL_TDEP, (
+        f"{name}: degenerate-average consistency inside multiplets rel="
+        f"{worst_multi/scale:.2e}")
 
-def test_velocity_operator_blocked_tensor_no_tdep_eigenvectors(fixture):
-    """``T[q,B,B',a,b] = sum_{s in B, s' in B'} v^a conj(v^b)``, gkmx's own basis.
-
-    Contracting over each degenerate multiplet is the smallest operation that
-    removes the intra-multiplet unitary, and nothing else is summed: q, the block
-    pair and both Cartesian indices stay resolved, and non-degenerate blocks have
-    size 1, so there the object is the full per-pair ``v^a conj(v^b)``.
-
-    This covers the pairs the squared test above cannot. Measured 5.9e-10 /
-    1.9e-09 / 4.7e-10 over 4464 / 8586 / 38457 components.
-    """
-    name, _, ref, prim, sc, fc = fixture
-    v, w = _v_own_eigenvectors(ref, prim, sc, fc)
-    target = ref["velocity_offdiagonal"]
-
-    def blocked(vq, wq):
-        ns = len(wq)
-        blocks, i = [], 0
-        while i < ns:
-            j = i + 1
-            while j < ns and abs(wq[j] - wq[i]) < DEGENERACY_TOL:
-                j += 1
-            blocks.append((i, j))
-            i = j
-        nb = len(blocks)
-        T = np.zeros((nb, nb, 3, 3))
-        for I, (a0, a1) in enumerate(blocks):
-            for J, (b0, b1) in enumerate(blocks):
-                blk = vq[a0:a1, b0:b1]
-                T[I, J] = np.einsum("sta,stb->ab", blk, np.conj(blk)).real
-        return T
-
-    dif = scale = 0.0
-    for iq in range(len(v)):
-        Tg, Tt = blocked(v[iq], w[iq]), blocked(target[iq], w[iq])
-        dif = max(dif, np.abs(Tg - Tt).max())
-        scale = max(scale, np.abs(Tt).max())
-    rel = dif / scale
-    assert rel < TOL_TDEP, f"{name}: blocked v tensor rel={rel:.2e}"
+    # Guard: raw elements inside multiplets must NOT agree -- if they ever
+    # do, the two codes' bases no longer differ and the split above is
+    # silently weaker than it looks.
+    deg_mode = np.zeros(w.shape, dtype=bool)
+    for iq in range(len(w)):
+        deg_mode[iq] = np.bincount(block_index[iq])[block_index[iq]] > 1
+    deg_pair = deg_mode[:, :, None] | deg_mode[:, None, :]
+    d_el = np.abs(np.abs(v) ** 2 - np.abs(target) ** 2).max(axis=-1)
+    if deg_pair.any():
+        assert d_el[deg_pair].max() / (np.abs(target) ** 2).max() > 1e-3, (
+            f"{name}: degenerate pairs agree elementwise; the multiplet basis "
+            f"no longer differs, so revisit this split")
 
 
 def test_kernel_weights_are_constant_within_a_multiplet(fixture):
@@ -362,6 +386,7 @@ def _averaged_and_raw(ref, prim, sc, fc, which):
         M = np.einsum("ji,ajk,kl->ail", np.conj(U), dD_T, U, optimize=True)
         raw[iq] = np.moveaxis(M * (0.5 * s[:, None] * s[None, :])[None], 0, -1) \
             * C.gv_to_AA_fs
+    # No w_qs= on purpose: mirrors TDEP's unprojected kronegv average.
     return symmetrize_v_qssa(raw, e_own, q, prim), raw
 
 

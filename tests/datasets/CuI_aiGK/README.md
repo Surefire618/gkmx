@@ -17,8 +17,7 @@ windows so both methods still converge.
 
 ## Scientific context
 
-The corresponding discussion lives in
-`memory/project_vibes_tom_vs_aniso_bte_factor2.md`. On the full
+On the full
 60 ps CuI trajectory, the median per-mode ratio τ_wick/τ_vertex is
 1.01 (most modes SMA-valid). On this 5 ps half-eq + half-metastable
 slice gkmx reports τ-median ratio ≈ 1.13 (modest — most modes
@@ -61,8 +60,7 @@ despite 5× more frames than KI_B2_MLIP.
   1000). Matches the `to_W_mK = e * 1e25` conversion in
   `gkmx._constants`. The gkmx pipeline no longer divides by 1000;
   any fixture derived from a vibes-format trajectory must apply the
-  conversion at fixture time. See
-  `memory/feedback_vibes_heat_flux_unit_convention.md`.
+  conversion at fixture time.
 - **5 ps is too short to converge κ.** Long-lifetime acoustic modes
   (τ > ~1 ps) still don't fit cleanly here — this fixture exists to
   exercise the factorization code paths and regress the breakdown

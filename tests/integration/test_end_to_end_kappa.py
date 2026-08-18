@@ -65,14 +65,15 @@ class TestEndToEndKappa:
 
     @pytest.mark.parametrize("backend", ["numpy", "jax"])
     def test_kappa_no_interp(self, trajectory, fc_file, backend):
-        """Raw κ pinned within the band in `_pins.KAPPA_RAW_TOL`. fp32
-        and fp64 agree bit-identically post the 2026-04-19 dtype-
-        propagation pass, so a single ref serves both backends."""
+        """Raw κ pinned within the band in `_pins.KAPPA_RAW_TOL`, at
+        fp64 (the precision the pins are baked at; the default fp32
+        path lands 7e-9 away on this scalar)."""
         ds = get_kappa(
             trajectory.copy(deep=True),
             fc_file=fc_file,
             interpolate=False,
             backend=backend,
+            precision="fp64",
         )
         assert "thermal_conductivity" in ds
         k = np.asarray(ds["thermal_conductivity"].data)
@@ -95,6 +96,7 @@ class TestEndToEndKappa:
             interpolate=True,
             nq_max=8,
             backend=backend,
+            precision="fp64",
         )
         assert "thermal_conductivity_corrected" in ds
         k_corr = np.asarray(ds["thermal_conductivity_corrected"].data)

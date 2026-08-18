@@ -17,9 +17,11 @@ from gkmx.phonon import (
     SolutionWithGVM,
     _symmetrize_v_site,
     degenerate_sets,
+    translational_invariance,
 )
+from gkmx.space_group import refine_geometry, space_group_invariance
 
-from .._tolerances import TOL_FP64
+from .._tolerances import TOL_FP32_BLOCK_POWER, TOL_FP64
 
 DATA_DIR = Path(__file__).parent.parent / "datasets" / "KI_B2_MLIP"
 
@@ -68,8 +70,9 @@ def test_solve_shapes_invariants_and_reference(setup):
     prim, sc, fc, q, ref = setup
     Nq, Ns = len(q), 3 * len(prim)
 
-    # the checked-in DynamicalMatrix.nc reference predates ASR enforcement
-    sol = Phonon(fc, prim, sc, enforce_translational_invariance=False).solve(
+    # the checked-in DynamicalMatrix.nc reference is baked with the library
+    # defaults (ASR + space-group projection, TDEP convention)
+    sol = Phonon(fc, prim, sc).solve(
         q, with_group_velocity_matrices=True)
     assert isinstance(sol, SolutionWithGVM)
     assert sol.w_qs.shape == (Nq, Ns)
@@ -90,8 +93,9 @@ def test_solve_shapes_invariants_and_reference(setup):
     assert np.abs(overlap - np.eye(Ns)[None]).max() < TOL_FP64
 
     q_ref = np.asarray(ref["q_points"].data)
-    sol_at_ref = Phonon(fc, prim, sc, enforce_translational_invariance=False).solve(
-        q_ref, with_velocities=False)
+    # library defaults (ASR + space-group projection), matching the bake of
+    # the checked-in DynamicalMatrix.nc reference (regenerated 2026-08-17)
+    sol_at_ref = Phonon(fc, prim, sc).solve(q_ref, with_velocities=False)
     w_gkmx = np.sort(np.abs(np.asarray(sol_at_ref.w_qs)), axis=-1)
     w_ref = np.sort(np.abs(np.asarray(ref["w_qs"].data)), axis=-1)
     assert w_gkmx.shape == w_ref.shape
@@ -109,6 +113,54 @@ def test_solve_fp32_preserves_dtype(setup):
     assert sol.v_qsa_cartesian.dtype == np.float32
     assert sol.e_qsi.dtype == np.complex64
     assert sol.D_qij.dtype == np.complex64
+
+
+def _block_row_power(v, w):
+    """Per-(q, degenerate-block) row power ``sum_{s in B, t, a} |v|^2``.
+
+    Invariant under per-mode phases and intra-block rotations on both
+    sides, so it is comparable across precisions (whose eigh bases differ
+    inside multiplets), yet q- and block-resolved, so a localized error
+    cannot hide behind global compensation the way the banned scalar
+    ``sum|v_off|^2`` allows."""
+    Nq, Ns = w.shape
+    blmap = {}
+    for qj, i0, i1 in degenerate_sets(w):
+        blmap.setdefault(qj, []).append((i0, i1))
+    out = []
+    for qi in range(Nq):
+        bounds, pos = [], 0
+        for i0, i1 in blmap.get(qi, []):
+            bounds += [(s, s + 1) for s in range(pos, i0)] + [(i0, i1)]
+            pos = i1
+        bounds += [(s, s + 1) for s in range(pos, Ns)]
+        out.append(np.array([np.sum(np.abs(v[qi, i0:i1]) ** 2)
+                             for i0, i1 in bounds]))
+    return out
+
+
+def test_fp32_velocity_operator_matches_fp64(setup):
+    """fp32 vs fp64 ``v_qssa`` per convention on the Gamma-containing grid,
+    compared block-row-wise. The only in-suite detector for the fp32
+    acoustic-gate floor, the pre-average band mask, and the frequency-block
+    G projection: with any of them reverted the TDEP mode average smears
+    1/(2 sqrt(w w')) Gamma-acoustic garbage into live modes (5-38x
+    inflation before the gate-floor fix). Measured 7.3e-7..9.1e-7."""
+    prim, sc, fc, q, _ = setup
+    for c in CONVENTIONS:
+        rp = {}
+        for p in ("fp32", "fp64"):
+            sol = Phonon(fc, prim, sc, precision=p, convention=c).solve(
+                q, with_velocities=True, with_group_velocity_matrices=True)
+            v = np.asarray(sol.v_qssa_cartesian, dtype=np.complex128)
+            w = np.abs(np.asarray(sol.w_qs, dtype=np.float64))
+            rp[p] = _block_row_power(v, w)
+        scale = max(b.max() for b in rp["fp64"])
+        worst = max(np.abs(a - b).max()
+                    for a, b in zip(rp["fp32"], rp["fp64"]))
+        assert worst / scale < TOL_FP32_BLOCK_POWER, (
+            f"{c}: per-(q,block) row power fp32 vs fp64 rel = "
+            f"{worst/scale:.2e}")
 
 
 def test_solve_without_velocities(setup):
@@ -160,13 +212,15 @@ def test_p2s_map_is_noop_for_tdep(setup):
 def test_convention_is_validated(setup):
     """`convention` selects the whole upstream convention, not one knob.
 
-    "PHONOPY" rotates the degenerate basis to diagonalise dD/dq . probe and
-    averages the Cartesian index of v_qsa; "TDEP" gives every member of a
-    multiplet the subspace mean, averages the mode indices of v_qssa instead,
-    and carries the per-atom Bloch phase. Each leaves alone the index the other
-    symmetrizes."""
+    "TDEP" gives every member of a multiplet the subspace mean, averages the
+    mode indices of v_qssa with Gamma(R, q), and carries the per-atom Bloch
+    phase; "PHONO3PY" rotates the degenerate basis to diagonalise
+    dD/dq . probe and applies the Cartesian site average to v_qsa and to
+    every (s, s') pair of v_qssa (phono3py-Kubo); "RAW" applies nothing at
+    all. PHONO3PY and RAW both satisfy diag(v_qssa) == v_qsa by
+    construction."""
     prim, sc, fc, _, _ = setup
-    assert set(CONVENTIONS) == {"PHONOPY", "TDEP"}
+    assert set(CONVENTIONS) == {"TDEP", "PHONO3PY", "RAW"}
 
     for convention in CONVENTIONS:
         ph = Phonon(force_constants=fc, primitive=prim, supercell=sc,
@@ -205,7 +259,8 @@ def test_convention_agrees_on_frequencies(setup):
     w = {c: np.asarray(Phonon(force_constants=fc, primitive=prim, supercell=sc,
                               precision="fp64", convention=c).solve(q).w_qs)
          for c in CONVENTIONS}
-    rel = np.abs(w["TDEP"] - w["PHONOPY"]).max() / np.abs(w["PHONOPY"]).max()
+    scale = np.abs(w["TDEP"]).max()
+    rel = max(np.abs(w[c] - w["TDEP"]).max() / scale for c in CONVENTIONS)
     assert rel < TOL_FP64, f"convention moved the frequencies by {rel:.2e}"
 
 
@@ -214,7 +269,7 @@ def test_convention_difference_on_the_diagonal_is_the_site_average(setup):
 
     The Bloch map spares the diagonal (its commutator term goes as
     ``w_s^2 - w_s'^2``) and the multiplet treatments agree there too, so what is
-    left is the Cartesian site average PHONOPY applies over L(q) and TDEP does
+    left is the Cartesian site average PHONO3PY applies over L(q) and TDEP does
     not. That average is the identity only when the force constants respect the
     site symmetry: on the TDEP-fitted fixtures it moves ``v_qsa`` by 1e-14, but
     these MLIP constants carry a 6.9 % ASR residual and it moves them by
@@ -223,17 +278,21 @@ def test_convention_difference_on_the_diagonal_is_the_site_average(setup):
     prim, sc, fc, q, _ = setup
     v = {}
     for c in CONVENTIONS:
+        # raw fitted FCs on purpose: the site average only moves v_qsa where
+        # the FC breaks the site symmetry, which the default projection now
+        # removes -- with it on, the anti-vacuity guard below would trip.
         ph = Phonon(force_constants=fc, primitive=prim, supercell=sc,
-                    precision="fp64", convention=c)
+                    precision="fp64", convention=c,
+                    enforce_space_group=False)
         v[c] = (ph, np.asarray(ph.solve(q, with_velocities=True).v_qsa_cartesian))
-    (ph_phonopy, v_phonopy), (_, v_tdep) = v["PHONOPY"], v["TDEP"]
+    (ph_p3, v_p3), (_, v_tdep) = v["PHONO3PY"], v["TDEP"]
 
     recip = np.linalg.inv(np.asarray(prim.cell))
-    averaged = _symmetrize_v_site(v_tdep.copy(), q, ph_phonopy._symm_rots_frac, recip)
-    assert np.abs(v_phonopy - averaged).max() / np.abs(v_phonopy).max() < TOL_FP64, (
-        "PHONOPY's v_qsa is not the site average of TDEP's")
+    averaged = _symmetrize_v_site(v_tdep.copy(), q, ph_p3._symm_rots_frac, recip)
+    assert np.abs(v_p3 - averaged).max() / np.abs(v_p3).max() < TOL_FP64, (
+        "PHONO3PY's v_qsa is not the site average of TDEP's")
 
-    moved = np.abs(v_phonopy - v_tdep).max() / np.abs(v_phonopy).max()
+    moved = np.abs(v_p3 - v_tdep).max() / np.abs(v_p3).max()
     assert moved > 1e-3, (
         f"the site average did nothing here (max {moved:.2e}); the assertion "
         f"above holds trivially and proves nothing about routing")
@@ -253,9 +312,9 @@ def test_convention_changes_the_off_diagonal_velocity(setup):
                 with_group_velocity_matrices=True).v_qssa_cartesian)
          for c in CONVENTIONS}
 
-    off = ~np.eye(v["PHONOPY"].shape[1], dtype=bool)
-    moved = (np.abs(v["PHONOPY"] - v["TDEP"])[:, off].max()
-             / np.abs(v["PHONOPY"]).max())
+    off = ~np.eye(v["PHONO3PY"].shape[1], dtype=bool)
+    moved = (np.abs(v["PHONO3PY"] - v["TDEP"])[:, off].max()
+             / np.abs(v["PHONO3PY"]).max())
     assert moved > 1e-3, (
         f"convention left v_ss' unchanged off the diagonal (max {moved:.2e}); "
         f"the switch is a no-op")
@@ -276,3 +335,79 @@ def test_velocity_operator_is_hermitian(setup):
             with_group_velocity_matrices=True).v_qssa_cartesian)
         rel = np.abs(v - np.conj(np.swapaxes(v, 1, 2))).max() / np.abs(v).max()
         assert rel < TOL_FP64, f"{c}: v_ss' is not Hermitian, rel={rel:.2e}"
+
+
+def test_space_group_invariance_properties():
+    """The FC projector: projector, ASR-preserving, G-invariant, coset-exact.
+
+    All on a ~2 % noise-injected FC -- mandatory, because TDEP-fitted FCs are
+    already symmetric and every assertion below would pass with the projector
+    stubbed to ``return fc``. tdep_Ga2O3_kappa: non-symmorphic (Pna2_1),
+    32 supercell ops over 4 rotations, so the coset restriction is exercised.
+    """
+    d = Path(__file__).parent.parent / "datasets" / "tdep_Ga2O3_kappa"
+    prim = ase_io.read(str(d / "geometry.in.primitive"), format="aims")
+    sc = ase_io.read(str(d / "geometry.in.supercell"), format="aims")
+    fc = np.load(d / "force_constants.npz")["force_constants"].astype(float)
+
+    rng = np.random.default_rng(20260817)
+    noisy = fc + 0.02 * np.abs(fc).max() * rng.standard_normal(fc.shape)
+    noisy, _ = translational_invariance(noisy, prim, sc)
+
+    projected, removed = space_group_invariance(noisy, prim, sc)
+    assert removed > 1e-3, "noise injection failed; every check below is vacuous"
+
+    # projector: a second application changes nothing
+    _, second = space_group_invariance(projected, prim, sc)
+    assert second < 1e-14
+
+    # ASR preserved exactly (row sums map to rotated row sums)
+    assert np.abs(projected.sum(axis=1)).max() \
+        / max(np.abs(projected).max(), 1e-30) < 1e-13
+
+    # positive control: the noisy input itself fails by orders of magnitude
+    assert removed / max(second, 1e-30) > 1e10
+
+
+def test_refine_geometry_properties():
+    """Noise-injected controls for the geometry projection, mirroring
+    ``test_space_group_invariance_properties``: a Wyckoff coordinate pushed
+    1e-6 A off its site is restored, the projection is idempotent, the wrap
+    branch of every atom is preserved (a lattice-vector shift broke the
+    KPTe2 anchors), boundary atoms land exactly on integers so downstream
+    hard wraps are deterministic, and an incommensurate pair raises."""
+    d = Path(__file__).parent.parent / "datasets" / "tdep_KI_bcc"
+    prim = ase_io.read(str(d / "geometry.in.primitive"), format="aims")
+    sc = ase_io.read(str(d / "geometry.in.supercell"), format="aims")
+
+    noisy = sc.copy()
+    noisy.positions = noisy.positions + 0.0
+    noisy.positions[5] += [1e-6, -1e-6, 1e-6]
+    _, s2, res = refine_geometry(prim, noisy)
+    assert res > 5e-7, "residual does not reflect the injected displacement"
+    assert np.abs(s2.positions[5] - sc.positions[5]).max() < 1e-8, \
+        "injected 1e-6 A displacement not projected out"
+    assert np.abs(s2.positions - sc.positions).max() < 1e-7
+
+    # idempotency on already-symmetric input (one pass is exact there; a
+    # noisy input also moves the detected origin, so ITS convergence is
+    # geometric rather than one-shot)
+    pc, scn, _ = refine_geometry(prim, sc)
+    pc2, scn2, res2 = refine_geometry(pc, scn)
+    assert res2 < 1e-12
+    assert np.abs(scn2.positions - scn.positions).max() < 1e-12
+    assert np.abs(np.asarray(pc2.cell) - np.asarray(pc.cell)).max() < 1e-12
+
+    # wrap-branch preservation: no atom moved by a lattice vector
+    dfrac = (s2.positions - sc.positions) @ np.linalg.inv(np.asarray(sc.cell))
+    assert np.abs(dfrac).max() < 0.5
+
+    # boundary determinism: near-integer fractional coordinates are exact
+    f = s2.positions @ np.linalg.inv(np.asarray(s2.cell))
+    near = np.abs(f - np.rint(f)) < 1e-9
+    assert np.all(f[near] == np.rint(f)[near])
+
+    bad = prim.copy()
+    bad.set_cell(np.asarray(prim.cell) * 1.017, scale_atoms=True)
+    with pytest.raises(ValueError, match="integer multiple"):
+        refine_geometry(bad, sc)
