@@ -31,7 +31,7 @@ from .kappa import get_kappa_BTE, qhgk_tau_eff
 from .kappa import symmetrize_kappa as _symmetrize_kappa
 from .mic import fold as mic_fold
 from .mic import is_orthogonal
-from .phonon import degenerate_sets
+from .phonon import DEGENERACY_TOL, degenerate_sets
 from .precision import Precision
 from .trajectory import gk_prefactor
 
@@ -430,6 +430,14 @@ def compute_cv_tau(dataset, dmx, stride=1, t_chunk=5000, mode_block=None,
         sum_abs4 = (abs2 * abs2).sum(axis=-1)
         del abs2
 
+        if factorization == "wick":
+            # Subtract the mode mean before the ACF (the vertex path already
+            # centers n): a static offset <a> != 0 -- metastable / defect
+            # trajectories -- adds a |<a>|^2 plateau to |g|^2 that biases
+            # the threshold fit low, and the symmetrized sum below would
+            # add the plateaus of equivalent modes coherently.
+            a_re = a_re - a_re.mean(axis=-1, keepdims=True)
+            a_im = a_im - a_im.mean(axis=-1, keepdims=True)
         a_blk = bk.complex(a_re, a_im, dtype=dtype_a)
         del a_re, a_im
         if factorization == "wick":
@@ -465,20 +473,44 @@ def compute_cv_tau(dataset, dmx, stride=1, t_chunk=5000, mode_block=None,
         one = bk.xp.asarray(1, dtype=dtype_u)
         var_a_safe = bk.xp.where(var_a > eps2, var_a, one)
         inv_var2 = bk.to_host(one / (var_a_safe * var_a_safe))
-        return cv_vals, inv_var2
+        var_h = bk.to_host(var_a)
+        mean2 = bk.to_host(mean_a_re * mean_a_re + mean_a_im * mean_a_im)
+        dc = mean2 / np.maximum(var_h, np.finfo(dtype_u).tiny)
+        return cv_vals, inv_var2, var_h, dc
 
-    def _fit_taus(C_arr, inv_var2, B):
-        """Per-mode exponential fit; returns a ``(B,)`` array of tau in fs."""
+    def _fit_taus(C_arr, inv_var2, var_a, segs):
+        """Exponential fits; returns tau in fs for the chunk's modes.
+
+        Wick path: one fit per group of symmetry-equivalent modes on
+        ``|sum_m g_m|^2 / (sum_m var_m)^2``. Within a multiplet the sum is
+        the trace of the block correlation matrix, so the fitted tau cannot
+        see which intra-multiplet basis eigh picked; across equivalent
+        q-points it adds their statistics to one smooth curve instead of M
+        noisy ones (a nonlinear fit of noisy curves is biased; averaging
+        the fits keeps the bias, averaging the curves shrinks it).
+        Singleton groups reduce to the per-mode curve exactly. The vertex
+        path stays per-mode: its diagonal ``<nn>`` sum is quartic in `a`
+        and has no invariant assembled from diagonals alone.
+        """
+        B = segs[-1][1]
+        taus = np.full(B, np.nan, dtype=dtype_u)
         if factorization == "wick":
-            g2 = C_arr.real * C_arr.real + C_arr.imag * C_arr.imag
-            curves = bk.to_host(g2) * inv_var2[:, None]
-            taus = np.full(B, np.nan, dtype=dtype_u)
-            for i in range(B):
-                taus[i] = _fit_tau(curves[i], dt=dt,
-                                    thresh=lifetime_fit_cutoff)
+            g = bk.to_host(C_arr)
+            for i0, i1 in segs:
+                if i1 - i0 == 1:
+                    g2 = g[i0].real ** 2 + g[i0].imag ** 2
+                    curve = g2 * inv_var2[i0]
+                else:
+                    tr = g[i0:i1].sum(axis=0)
+                    var_sum = var_a[i0:i1].sum()
+                    if not var_sum > 0:
+                        continue
+                    curve = (tr.real ** 2 + tr.imag ** 2) / (var_sum
+                                                             * var_sum)
+                taus[i0:i1] = _fit_tau(curve, dt=dt,
+                                        thresh=lifetime_fit_cutoff)
             return taus
         nn = bk.to_host(C_arr.real)
-        taus = np.full(B, np.nan, dtype=dtype_u)
         for i in range(B):
             c0 = nn[i, 0]
             if c0 <= 0 or not np.isfinite(c0):
@@ -487,14 +519,55 @@ def compute_cv_tau(dataset, dmx, stride=1, t_chunk=5000, mode_block=None,
                                 thresh=lifetime_fit_cutoff)
         return taus
 
-    for m0 in range(0, nmodes, mode_block):
-        m1 = min(nmodes, m0 + mode_block)
-        B = m1 - m0
+    # Groups of symmetry-equivalent modes: one per irreducible q and
+    # degenerate multiplet, spanning the equivalent q-points.
+    w_abs = np.abs(np.asarray(dmx.w_qs))
+    map2ir = np.asarray(dmx.q_grid.map2ir)
+    map2full = np.asarray(dmx.q_grid.ir.map2full)
+
+    def _mode_groups(qrep, qset):
+        out, covered = [], np.zeros(Ns, dtype=bool)
+        for _, b0, b1 in degenerate_sets(w_abs[[qrep]]):
+            out.append((np.asarray(qset)[:, None] * Ns
+                        + np.arange(b0, b1)).ravel())
+            covered[b0:b1] = True
+        out += [np.asarray(qset) * Ns + si for si in np.flatnonzero(~covered)]
+        return out
+
+    groups, n_misaligned = [], 0
+    for ii, qrep in enumerate(map2ir):
+        members = np.flatnonzero(map2full == ii)
+        if np.abs(w_abs[members] - w_abs[qrep]).max() <= DEGENERACY_TOL:
+            groups += _mode_groups(qrep, members)
+        else:
+            n_misaligned += 1
+            for m in members:
+                groups += _mode_groups(m, [m])
+    if n_misaligned:
+        warn(f"compute_cv_tau: {n_misaligned} groups of symmetry-equivalent "
+             f"q-points have spectra deviating beyond the degeneracy "
+             f"tolerance; their tau fits fall back to per-q groups.")
+
+    dc_mode = np.zeros(nmodes, dtype=dtype_u)
+    k0 = 0
+    while k0 < len(groups):
+        k1, total = k0, 0
+        while k1 < len(groups) and (total + len(groups[k1]) <= mode_block
+                                    or k1 == k0):
+            total += len(groups[k1])
+            k1 += 1
+        idx = np.concatenate(groups[k0:k1])
+        segs, pos = [], 0
+        for g in groups[k0:k1]:
+            segs.append((pos, pos + len(g)))
+            pos += len(g)
         sums, C_arr = _full_block(
-            e_re_d[m0:m1], e_im_d[m0:m1], w_inv_d[m0:m1], B)
-        cv_mode[m0:m1], inv_var2 = _cv_and_inv_var(sums, w2_m[m0:m1])
-        tau_mode[m0:m1] = _fit_taus(C_arr, inv_var2, B)
-        del sums, C_arr, inv_var2
+            e_re_d[idx], e_im_d[idx], w_inv_d[idx], len(idx))
+        cv_mode[idx], inv_var2, var_a, dc = _cv_and_inv_var(sums, w2_m[idx])
+        tau_mode[idx] = _fit_taus(C_arr, inv_var2, var_a, segs)
+        dc_mode[idx] = dc
+        del sums, C_arr, inv_var2, var_a, dc
+        k0 = k1
 
     volume = float(np.asarray(dataset.volume).mean())
     temperature = float(np.asarray(dataset.temperature).mean())
@@ -510,6 +583,19 @@ def compute_cv_tau(dataset, dmx, stride=1, t_chunk=5000, mode_block=None,
     tau_qs = tau_mode.reshape(Nq, Ns)
     # In-place mask (not np.where) to avoid fp64 upcast of tau_qs.
     tau_qs[np.asarray(dmx.w_qs) < 1e-6] = np.nan
+
+    # Non-stationarity gate on the fitted modes only (the tau mask above is
+    # the liveness criterion; numerically dead acoustics have var ~ 0 and a
+    # meaningless ratio).
+    dc_live = dc_mode.reshape(Nq, Ns)[np.isfinite(tau_qs)]
+    dc_count = int((dc_live > 0.1).sum())
+    if dc_count:
+        warn(f"compute_cv_tau: {dc_count} of {dc_live.size} fitted modes "
+             f"are non-stationary (|<a>|^2/var > 0.1, max "
+             f"{float(dc_live.max()):.2f}) -- the trajectory may straddle "
+             f"a structural transition. The ACF uses mean-centered "
+             f"amplitudes, but a two-basin slow component can still "
+             f"contaminate the fit tail.")
 
     _average_over_multiplets(cv_qs, tau_qs, np.asarray(dmx.w_qs))
 
