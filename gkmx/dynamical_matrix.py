@@ -242,14 +242,33 @@ class DynamicalMatrix:
         return positions
 
     def _build_e_qsI(self):
-        """``e_qsI = (1/sqrt(Nq)) * exp(2*pi*i q·R_k) * e_qsi[..., 3*i(k)+a]``."""
+        """Supercell projector, with the intra-cell offset applied exactly once::
+
+            native   e_qsI = Nq^-1/2 exp(2 pi i q.(r_i + L)) e_qsi[s, i(I)]
+            TDEP     e_qsI = Nq^-1/2 exp(2 pi i q.L)    conj(e_qsi[s, i(I)])
+
+        TDEP solves in ``e_T = P conj(e)``, ``P = diag(exp(-2 pi i q.r_a))``, so
+        it already carries the offset the native phase supplies. Both give the
+        same amplitude; one half of each mixes modes
+        (`tests/unit/test_bloch_projector.py`).
+        """
         Rs = self._build_supercell_positions()
         q_cart = np.asarray(self.q_points_cartesian,
                             dtype=self._dtype_real)
         Nq = len(q_cart)
         p_indices = self._I2iL[:, 0]
         i_of_I = np.concatenate([np.arange(3) + 3 * ii for ii in p_indices])
-        e_qsI = self._solution.e_qsi[:, :, i_of_I]
+        e_qsi = self._solution.e_qsi
+        if self._convention == "TDEP":
+            # Subtract the same wrapped representative `_to_tdep_bloch` built
+            # P from, so an unwrapped primitive cannot leave a per-atom
+            # exp(2 pi i q.delta) behind; for a wrapped one this is exactly the
+            # lattice point.
+            rho = (np.asarray(self.primitive.get_scaled_positions())
+                   @ np.asarray(self.primitive.cell))
+            Rs = Rs - rho[p_indices].astype(Rs.dtype)
+            e_qsi = np.conj(e_qsi)
+        e_qsI = e_qsi[:, :, i_of_I]
         # `2j * np.pi` upcasts to complex128 unless cast to _dtype_complex.
         two_pi_j = self._dtype_complex(2j * np.pi)
         q_dot_R = (q_cart[:, None, :] * Rs[None, :, :]).sum(axis=-1)

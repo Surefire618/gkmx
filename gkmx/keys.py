@@ -81,6 +81,7 @@ filter_prominence = "filter_prominence"
 heat_capacity = "heat_capacity"
 mode_heat_capacity = _join("mode", heat_capacity)
 mode_lifetime = "mode_lifetime"
+mode_lifetime_symmetrized = _join(mode_lifetime, symmetrized)
 
 kappa = "thermal_conductivity"
 kappa_symmetrized = _join(kappa, symmetrized)

@@ -1124,7 +1124,10 @@ def _get_gk_dataset(dataset, dmx=None, interpolate=False,
             data[keys.hf_acf_QHGK_integral] = (keys.time_tensor, k_QHGK)
             timer()
 
-        if interpolate:
+        # The interpolation fields are absent when the commensurate grid cannot
+        # triangulate (QhullError, e.g. a supercell sampling a 2D q-plane) —
+        # degrade to the uncorrected output instead of crashing.
+        if interpolate and hasattr(data_ha, keys.interpolation_correction):
             correction = data_ha.interpolation_correction
             kappa_corrected = ks + correction * np.eye(3, dtype=ks.dtype)
             data[keys.kappa_corrected] = (keys.tensor, kappa_corrected)
