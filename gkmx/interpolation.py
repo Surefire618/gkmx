@@ -1,6 +1,5 @@
 """Dense-q-grid interpolation + linear extrapolation of kappa to infinite supercell."""
 
-from itertools import product
 
 import numpy as np
 import xarray as xr
@@ -49,6 +48,24 @@ def interpolate_to_grid(q_points, train_array_qs, train_points, tol=1e-9):
     for ns in range(Ns):
         out[:, ns] = griddata(train_points, train_array_qs[:, ns], new_pts)
     return out
+
+
+def fit_kappa_ladder(nqs, Ks):
+    """Per-component weighted linear fit ``kappa(1/nq) = m/nq + y0``.
+
+    ``sigma = 1/nq`` so the denser grids dominate the intercept. Returns
+    ``(slope_ab, intercept_ab, slope_stderr_ab, intercept_stderr_ab)``, each
+    ``(3, 3)``.
+    """
+    x = np.asarray(nqs, dtype=float) ** -1.0
+    Ks = np.asarray(Ks)
+    out = np.zeros((4, 3, 3))
+    for a, b in np.ndindex(3, 3):
+        popt, pcov = curve_fit(lambda _x, m, y0: m * _x + y0, x, Ks[:, a, b],
+                               p0=(-1, 10), sigma=x)
+        out[0, a, b], out[1, a, b] = popt
+        out[2, a, b], out[3, a, b] = np.sqrt(np.diag(pcov))
+    return tuple(out)
 
 
 def get_interpolation_data(dmx, lifetimes, cv, nq_max=20, quasi_harmonic_greenkubo=False):
@@ -126,23 +143,12 @@ def get_interpolation_data(dmx, lifetimes, cv, nq_max=20, quasi_harmonic_greenku
     if quasi_harmonic_greenkubo:
         Ks_QHGK_da = xr.DataArray(Ks_QHGK, dims=("nq", *keys.tensor), coords={"nq": nqs})
 
-    # Linear fit kappa(1/nq) -> y0, weighted by 1/nq so the denser
-    # grids dominate the intercept.
-    correction_ab = np.zeros((3, 3))
-    correction_ab_stderr = np.zeros((3, 3))
-    m_last, y0_last, stderr_last = 0, 0, 0
-
-    for _a, _b in product(range(3), range(3)):
-        ks = np.asarray(Ks_QHGK[:, _a, _b] if quasi_harmonic_greenkubo else Ks[:, _a, _b])
-        popt, pcov = curve_fit(
-            lambda x, m, y0: m * x + y0, nqs ** -1.0, ks,
-            p0=(-1, 10), sigma=nqs ** -1.0,
-        )
-        m, y0 = popt
-        stderr = np.sqrt(np.diag(pcov))[0]
-        correction_ab[_a, _b] = y0 - float(kappa_ha[_a, _b])
-        correction_ab_stderr[_a, _b] = stderr
-        m_last, y0_last, stderr_last = m, y0, stderr
+    slope_ab, intercept_ab, correction_ab_stderr, _ = fit_kappa_ladder(
+        nqs, Ks_QHGK if quasi_harmonic_greenkubo else Ks)
+    correction_ab = intercept_ab - np.asarray(kappa_ha)
+    # The scalar fit_* entries report the zz component.
+    m_last, y0_last, stderr_last = (slope_ab[2, 2], intercept_ab[2, 2],
+                                    correction_ab_stderr[2, 2])
 
     k_ha = float(np.diagonal(kappa_ha).mean())
     correction = float(np.diagonal(correction_ab).mean())
