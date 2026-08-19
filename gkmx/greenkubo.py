@@ -1093,6 +1093,9 @@ def _get_gk_dataset(dataset, dmx=None, interpolate=False,
         # sigma_per_sample lives on every MD step.
         data[keys.sigma_per_sample] = (keys.time_md, sigma_ps)
         attrs[keys.sigma] = sigma
+        # Provenance: tau, cv and every mode-resolved field below depend on it,
+        # and nothing downstream can infer it from the arrays.
+        attrs["convention"] = dmx._convention
         timer()
 
         data_ha = _get_gk_interpolate(

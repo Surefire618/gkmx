@@ -45,6 +45,7 @@ from gkmx.interpolation import (
 from gkmx.io import json2atoms
 from gkmx.kappa import get_kappa_BTE, get_kappa_QHGK
 from gkmx.lattice_points import get_unit_grid_extended
+from gkmx.phonon import CONVENTIONS
 
 GAMMA_TOL = 1e-4
 
@@ -71,6 +72,7 @@ def load_ensemble(files):
     largest relative deviation is reported.
     """
     q_ref = fc_ref = None
+    conventions = set()
     taus, cvs, kappas = [], [], []
     prim = sc = None
     fc_dev = 0.0
@@ -89,11 +91,15 @@ def load_ensemble(files):
             taus.append(np.asarray(ds[keys.mode_lifetime_symmetrized]))
             cvs.append(float(ds[keys.heat_capacity]))
             kappas.append(np.asarray(ds[keys.kappa]))
+            conventions.add(ds.attrs.get("convention"))
     if fc_dev > 1e-8:
         print(f"per-run force constants deviate up to {fc_dev:.2e} relative "
               f"within this ensemble; {files[0]} represents it where an FC is "
               f"needed (only the primary ensemble's FC enters the extrapolation)")
+    if len(conventions) > 1:
+        raise ValueError(f"mixed velocity conventions in one ensemble: {conventions}")
     return SimpleNamespace(
+        convention=conventions.pop(),
         q_points=q_ref, tau_mean=_nanmean(np.stack(taus)), cv=float(np.mean(cvs)),
         kappa_runs=np.stack(kappas), fc=fc_ref,
         primitive=prim, supercell=sc, files=[str(f) for f in files],
@@ -268,6 +274,9 @@ def main(argv=None):
                          "ensemble; contributes training q-points + lifetimes")
     ap.add_argument("--nq-max", type=int, default=20,
                     help="ladder sweeps nq = 4..nq_max in steps of 2")
+    ap.add_argument("--convention", default=None, choices=list(CONVENTIONS),
+                    help="velocity convention for the harmonic quantities; "
+                         "default: read from the inputs")
     ap.add_argument("--max-mem-gb", type=float, default=6.0)
     ap.add_argument("-o", "--out", type=Path, default=None,
                     help="results JSON (default: print to stdout)")
@@ -281,10 +290,20 @@ def main(argv=None):
         q_sets.append(extra.q_points)
         tau_sets.append(extra.tau_mean)
 
+    # The velocities must come from the convention the lifetimes were projected
+    # in; solving in another one silently mixes two conventions in one kappa.
+    convention = args.convention or ens.convention
+    if convention is None:
+        raise SystemExit(
+            "inputs predate the `convention` attribute; pass --convention "
+            "to state which one produced them")
+    if ens.convention not in (None, convention):
+        raise SystemExit(f"--convention {convention} contradicts the inputs' "
+                         f"{ens.convention}")
     itp_dmx = DynamicalMatrix(
         force_constants=ens.fc, primitive=ens.primitive,
         supercell=ens.supercell, precision="fp64",
-        with_group_velocity_matrices=True)
+        with_group_velocity_matrices=True, convention=convention)
 
     result = extrapolate(
         itp_dmx, q_sets, tau_sets, cv=ens.cv,
@@ -296,6 +315,7 @@ def main(argv=None):
     std = float(scal.std(ddof=1)) if n > 1 else 0.0
     out = {
         "n_runs": n, "files": ens.files, "cv": ens.cv,
+        "convention": convention,
         "extra_supercell_files": extra.files if extra else None,
         "kappa_raw_mean": raw_mean.tolist(),
         "kappa_raw_scalar": float(scal.mean()),

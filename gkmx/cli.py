@@ -7,6 +7,7 @@ from pathlib import Path
 import xarray as xr
 
 from ._log import Timer, talk, warn
+from .phonon import CONVENTIONS
 
 xr.set_options(file_cache_maxsize=512)
 
@@ -112,6 +113,11 @@ def _add_gk_parser(subparsers):
     p.add_argument("--freq", default=None, type=float,
                    help="filter-window frequency in THz; bypasses VDOS auto-detect")
     p.add_argument(
+        "--convention", default="TDEP", choices=list(CONVENTIONS),
+        help="velocity convention: the Bloch representative and the "
+             "intra-multiplet basis v_ss' is reported in. Frequencies and "
+             "raw GK are identical in all three; kappa_QHGK is not.")
+    p.add_argument(
         "--heat-flux-time-unit", dest="heat_flux_time_unit",
         default=None, choices=["fs", "ps"],
         help="override heat_flux time base (default: auto-detect)")
@@ -187,6 +193,7 @@ def _cmd_gk(args):
     _talk(f"fc_file={args.fc_file}, dmx_file={args.dmx_file}, "
           f"interpolate={args.interpolate}, "
           f"precision={args.precision}, factorization={args.factorization}, "
+          f"convention={args.convention}, "
           f"lifetime_fit_cutoff={args.lifetime_fit_cutoff}, "
           f"correct_finite_time={args.correct_finite_time}")
 
@@ -199,6 +206,7 @@ def _cmd_gk(args):
         backend=backend,
         precision=args.precision,
         factorization=args.factorization,
+        convention=args.convention,
         freq=args.freq,
         analytical=args.analytical,
         lifetime_fit_cutoff=args.lifetime_fit_cutoff,
