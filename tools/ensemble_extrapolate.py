@@ -96,10 +96,13 @@ def load_ensemble(files):
         print(f"per-run force constants deviate up to {fc_dev:.2e} relative "
               f"within this ensemble; {files[0]} represents it where an FC is "
               f"needed (only the primary ensemble's FC enters the extrapolation)")
-    if len(conventions) > 1:
-        raise ValueError(f"mixed velocity conventions in one ensemble: {conventions}")
+    # `None` is unknown provenance (files written before the attribute existed),
+    # not a fourth convention: only two named and different ones are a mix.
+    _convention = {c for c in conventions if c is not None}
+    if len(_convention) > 1:
+        raise ValueError(f"mixed velocity conventions in one ensemble: {_convention}")
     return SimpleNamespace(
-        convention=conventions.pop(),
+        convention=_convention.pop() if _convention else None,
         q_points=q_ref, tau_mean=_nanmean(np.stack(taus)), cv=float(np.mean(cvs)),
         kappa_runs=np.stack(kappas), fc=fc_ref,
         primitive=prim, supercell=sc, files=[str(f) for f in files],
