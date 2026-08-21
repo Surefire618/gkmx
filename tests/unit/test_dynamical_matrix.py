@@ -67,10 +67,9 @@ def test_shapes_invariants_and_reference(dmx, setup):
     assert np.abs(np.sort(dmx.w_qs.flatten()) - w_ref).max() \
         / max(np.abs(w_ref).max(), 1e-30) < TOL_FP64
 
-    v2_ref = np.sort((np.asarray(ref["v_qsa"].data) ** 2).sum(axis=(1, 2)))
-    v2_new = np.sort((dmx.v_qsa_cartesian ** 2).sum(axis=(1, 2)))
-    assert np.abs(v2_new - v2_ref).max() \
-        / max(np.abs(v2_ref).max(), 1e-30) < TOL_FP64_DERIVED
+    # No v^2 here: this fixture is PHONO3PY, the cache is TDEP-baked, and the
+    # two no longer share a diagonal. Pinned on the default convention by
+    # `test_jax_and_numpy_agree_with_reference`.
 
     nI = dmx.e_qsI.shape[-1]
     weighted = (dmx.e_qsI * dmx.w2_qs[:, :, None]).reshape(-1, nI)
@@ -138,7 +137,10 @@ def test_jax_and_numpy_agree_with_reference(backend, setup):
     "phonopy_NaCl", "phonopy_RbIn3F10", "phonopy_Si", "phonopy_SrTiO3",
     "tdep_Ga2O3_kappa", "tdep_KI_bcc", "tdep_KPTe2", "tdep_Rb2O",
 ])
-@pytest.mark.parametrize("convention", CONVENTIONS)
+# PHONO3PY is excluded: it projects v_qsa and not the matrix, as phono3py does,
+# so the two come from different operators and the identity cannot hold.
+@pytest.mark.parametrize(
+    "convention", [c for c in CONVENTIONS if c != "PHONO3PY"])
 def test_velocity_matrix_diagonal_is_group_velocity(fixture, convention):
     """``diag(v_qssa) == v_qsa``: the same matrix element over the same
     denominator, and by Hellmann-Feynman the group velocity itself."""

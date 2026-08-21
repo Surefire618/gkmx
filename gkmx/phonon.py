@@ -776,10 +776,15 @@ class Phonon:
             e_qsi, v_qssa, v_qsa = _align_degenerate_branches(
                 w2, e_qsi, v_qssa, v_qsa)
         elif self.convention == "PHONO3PY":
-            nq, ns = v_qssa.shape[0], v_qssa.shape[1]
-            v_qssa = _symmetrize_v_site(
-                v_qssa.reshape(nq, ns * ns, 3), q_frac,
-                self._symm_rots_frac, recip_lat).reshape(nq, ns, ns, 3)
+            # phono3py 3a706b1f stopped site-averaging the velocity matrix,
+            # leaving it branch-aligned only; v_qsa above keeps its projector.
+            # nq, ns = v_qssa.shape[0], v_qssa.shape[1]
+            # v_qssa = _symmetrize_v_site(
+            #     v_qssa.reshape(nq, ns * ns, 3), q_frac,
+            #     self._symm_rots_frac, recip_lat).reshape(nq, ns, ns, 3)
+            v_qssa = np.where(band_mask[:, :, :, None], v_qssa, 0.0)
+            e_qsi, v_qssa, _ = _align_degenerate_branches(
+                w2, e_qsi, v_qssa, v_qsa)
 
         if not with_group_velocity_matrices:
             return Solution(

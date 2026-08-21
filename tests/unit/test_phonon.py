@@ -15,7 +15,6 @@ from gkmx.phonon import (
     CONVENTIONS,
     Phonon,
     SolutionWithGVM,
-    _symmetrize_v_site,
     degenerate_sets,
     translational_invariance,
 )
@@ -264,38 +263,31 @@ def test_convention_agrees_on_frequencies(setup):
     assert rel < TOL_FP64, f"convention moved the frequencies by {rel:.2e}"
 
 
-def test_convention_difference_on_the_diagonal_is_the_site_average(setup):
-    """On ``v_qsa`` the whole difference between conventions is the site average.
+def test_phono3py_is_raw_plus_branch_alignment(setup):
+    """PHONO3PY differs from RAW by a unitary inside each degenerate block.
 
-    The Bloch map spares the diagonal (its commutator term goes as
-    ``w_s^2 - w_s'^2``) and the multiplet treatments agree there too, so what is
-    left is the Cartesian site average PHONO3PY applies over L(q) and TDEP does
-    not. That average is the identity only when the force constants respect the
-    site symmetry: on the TDEP-fitted fixtures it moves ``v_qsa`` by 1e-14, but
-    these MLIP constants carry a 6.9 % ASR residual and it moves them by
-    2.8e-01. So kappa_BTE is not convention-free on fitted force constants.
+    Both now carry the same unsymmetrized operator, so the total weight is
+    invariant; only alignment moves weight onto the diagonal kappa_BTE reads.
     """
     prim, sc, fc, q, _ = setup
     v = {}
-    for c in CONVENTIONS:
-        # raw fitted FCs on purpose: the site average only moves v_qsa where
-        # the FC breaks the site symmetry, which the default projection now
-        # removes -- with it on, the anti-vacuity guard below would trip.
+    for c in ("PHONO3PY", "RAW"):
         ph = Phonon(force_constants=fc, primitive=prim, supercell=sc,
-                    precision="fp64", convention=c,
-                    enforce_space_group=False)
-        v[c] = (ph, np.asarray(ph.solve(q, with_velocities=True).v_qsa_cartesian))
-    (ph_p3, v_p3), (_, v_tdep) = v["PHONO3PY"], v["TDEP"]
+                    precision="fp64", convention=c)
+        sol = ph.solve(q, with_velocities=True,
+                       with_group_velocity_matrices=True)
+        v[c] = np.asarray(sol.v_qssa_cartesian)
 
-    recip = np.linalg.inv(np.asarray(prim.cell))
-    averaged = _symmetrize_v_site(v_tdep.copy(), q, ph_p3._symm_rots_frac, recip)
-    assert np.abs(v_p3 - averaged).max() / np.abs(v_p3).max() < TOL_FP64, (
-        "PHONO3PY's v_qsa is not the site average of TDEP's")
+    tot = {c: float((np.abs(x) ** 2).sum()) for c, x in v.items()}
+    assert abs(tot["PHONO3PY"] - tot["RAW"]) / max(tot["RAW"], 1e-30) < TOL_FP64, (
+        f"alignment is not unitary: total operator weight moved "
+        f"{tot['PHONO3PY']:.6e} vs {tot['RAW']:.6e}")
 
-    moved = np.abs(v_p3 - v_tdep).max() / np.abs(v_p3).max()
-    assert moved > 1e-3, (
-        f"the site average did nothing here (max {moved:.2e}); the assertion "
-        f"above holds trivially and proves nothing about routing")
+    share = {c: float((np.abs(np.einsum("qssa->qsa", x)) ** 2).sum()) / max(tot[c], 1e-30)
+             for c, x in v.items()}
+    assert share["PHONO3PY"] > share["RAW"], (
+        f"alignment did not concentrate weight on the diagonal "
+        f"(PHONO3PY {share['PHONO3PY']:.4f} vs RAW {share['RAW']:.4f})")
 
 
 def test_convention_changes_the_off_diagonal_velocity(setup):
