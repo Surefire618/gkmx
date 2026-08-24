@@ -9,6 +9,7 @@ from ase import io as ase_io
 from gkmx.lattice_points import (
     get_commensurate_q_points,
     get_lattice_points,
+    get_pair_vectors,
     get_smallest_vectors,
     get_unit_grid_extended,
     map_I_to_iL,
@@ -297,3 +298,88 @@ def test_commensurate_q_cannot_detect_wrong_images():
     assert np.abs(got - ref).max() > 0.1, (
         "non-commensurate q failed to see a whole-supercell shift; "
         "this test has no resolving power")
+
+
+PAIR_VECTOR_GEOMETRIES = [
+    "CuI_aiGK", "GaN", "Ga2O3", "KI_B2_MLIP",
+    "phonopy_AgErTe2", "phonopy_Li2ZnGeO4", "phonopy_LiCdBO3",
+    "phonopy_Mg2YbSb2", "phonopy_NaCl", "phonopy_RbIn3F10",
+    "phonopy_Si", "phonopy_SrTiO3",
+    "tdep_Ga2O3_kappa", "tdep_KI_bcc", "tdep_KPTe2", "tdep_Rb2O",
+]
+
+
+@pytest.fixture(scope="module")
+def pair_vector_reference():
+    """Digests of the direct N x N image search, frozen by
+    ``tests/datasets/_generate_pair_vector_references.py``. Recomputing the
+    search here would repeat the O(N^2 V) cost ``get_pair_vectors`` removes.
+    """
+    path = DATASETS / "pair_vectors_reference.npz"
+    if not path.is_file():
+        pytest.skip(f"reference fixture not found: {path}")
+    return np.load(path)
+
+
+def _digest(r0):
+    """Must match ``_generate_pair_vector_references.digest`` exactly.
+
+    Asymmetric weights in (I, J): a symmetric weight would be blind to the
+    transposition this exists to catch.
+    """
+    n = r0.shape[0]
+    i = np.arange(n, dtype=np.float64)
+    w = np.cos(1.0 + 0.7 * i[:, None] + 0.13 * i[None, :])
+    return np.einsum("IJ,IJa->a", w, r0, optimize=True)
+
+
+@pytest.mark.parametrize("name", PAIR_VECTOR_GEOMETRIES)
+def test_pair_vectors_match_the_direct_image_search(name, pair_vector_reference):
+    """``get_pair_vectors`` reaches the search's table by translation.
+
+    ``GaN`` and ``Ga2O3`` are in the list on purpose: their primitive sits off
+    the origin-cell atoms (0.19 and 0.43 fractional), so the (i, L) labelling
+    ``map_I_to_iL`` returns by rank-pairing is not geometric and they must take
+    the direct route rather than a silently wrong gather.
+    """
+    prim, sc = _read(name)
+    r0 = get_pair_vectors(prim, sc)
+    assert r0.shape == (len(sc), len(sc), 3)
+
+    ref = pair_vector_reference
+    absmax = float(ref[f"{name}__absmax"])
+    norm = float(ref[f"{name}__norm"])
+    assert abs(np.abs(r0).max() - absmax) / absmax < TOL_FP64_DERIVED
+    assert abs(np.linalg.norm(r0) - norm) / norm < TOL_FP64_DERIVED
+    d = _digest(r0)
+    # The digest sums N^2 signed terms, so scale the tolerance on the table
+    # rather than on the (heavily cancelled) sum.
+    assert (np.abs(d - ref[f"{name}__digest"]).max()
+            / (absmax * len(sc))) < TOL_FP64_DERIVED
+
+
+@pytest.mark.parametrize("name", ["KI_B2_MLIP", "phonopy_RbIn3F10"])
+def test_pair_vectors_reuse_the_solvers_cached_table(name, monkeypatch):
+    """Passing the solver's ``(N, N_p)`` table must give the identical answer
+    **and** run no image search of its own — skipping that search is the whole
+    point, and an equality check alone cannot tell whether it was skipped.
+    """
+    prim, sc = _read(name)
+    svec_frac, multi = get_smallest_vectors(prim, sc)
+    expected = get_pair_vectors(prim, sc)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("get_pair_vectors ran its own image search")
+
+    monkeypatch.setattr("gkmx.lattice_points.get_smallest_vectors", _boom)
+    assert np.array_equal(get_pair_vectors(prim, sc, svec_frac, multi),
+                          expected)
+
+
+def test_pair_vectors_are_antisymmetric():
+    """``r0[I, J] = mic(R_I - R_J)`` — a transposed gather is the failure this
+    catches, and it is invisible to magnitude checks.
+    """
+    prim, sc = _read("KI_B2_MLIP")
+    r0 = get_pair_vectors(prim, sc)
+    assert np.abs(r0 + r0.transpose(1, 0, 2)).max() < TOL_FP64

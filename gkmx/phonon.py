@@ -649,6 +649,14 @@ class Phonon:
             np.arange(self._V_max)[None, None, :] < multi[:, :, None]
         ).astype(self._dtype_real)
 
+    @property
+    def smallest_vectors(self):
+        """``(svec_frac, multi)`` as solved -- fractional in ``primitive.cell``.
+
+        The solver's own arrays, not copies; consumers must not mutate them.
+        """
+        return self._svec_frac, self._multi
+
     def solve(self, q_points_frac, with_velocities=True,
               with_group_velocity_matrices=False):
         """Solve the phonon eigenproblem at the given q-points.

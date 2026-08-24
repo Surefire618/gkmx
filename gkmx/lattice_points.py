@@ -238,6 +238,110 @@ def get_smallest_vectors(primitive, supercell, tol=1e-5, max_bytes=128 << 20):
     return svec_cart @ np.linalg.inv(A_prim), multi
 
 
+def _lattice_difference_table(lattice_points, cell, tol=1e-5,
+                              max_bytes=64 << 20):
+    """``Lsub[M, L]`` = index of the lattice point congruent to ``R_L - R_M``."""
+    lp = np.asarray(lattice_points, dtype=np.float64)
+    n = len(lp)
+    inv_cell = la.inv(np.asarray(cell, dtype=np.float64)[:].T)
+    decimals = int(-np.log10(tol)) - 1
+    scale = 10 ** decimals
+
+    def code(cart):
+        # Same wrap convention as map_I_to_iL: `(x + 1e-8) % 1.0`, never
+        # `x - floor(x)`. The `% scale` folds a key rounded up to 1.0 onto 0.
+        frac = (cart @ inv_cell.T + 1e-8) % 1.0
+        c = np.rint(frac * scale).astype(np.int64) % scale
+        return (c[..., 0] * scale + c[..., 1]) * scale + c[..., 2]
+
+    ref = code(lp)
+    order = np.argsort(ref)
+    ref_sorted = ref[order]
+
+    out = np.empty((n, n), dtype=np.int64)
+    block = max(1, int(max_bytes // (n * 3 * 8)))
+    for m0 in range(0, n, block):
+        m1 = min(n, m0 + block)
+        want = code(lp[None, :, :] - lp[m0:m1, None, :])
+        pos = np.searchsorted(ref_sorted, want.ravel())
+        idx = order[np.clip(pos, 0, n - 1)]
+        if not np.array_equal(ref[idx], want.ravel()):
+            raise RuntimeError(
+                "lattice difference is not itself a lattice point; the "
+                "lattice-point set is not closed under the supercell.")
+        out[m0:m1] = idx.reshape(m1 - m0, n)
+    return out
+
+
+def get_pair_vectors(primitive, supercell, svec_frac=None, multi=None,
+                     lattice_points=None, tol=1e-5):
+    """Multiplicity-averaged ``mic(R_I - R_J)`` for every supercell pair.
+
+    Returns ``(N_sc, N_sc, 3)`` Cartesian vectors -- the pair-resolved analogue
+    of ``get_smallest_vectors``, averaged over tied images the same way.
+
+    Computed by translation rather than by an ``N x N`` image search. When the
+    supercell obeys ``R_(i,L) = R_(i,L0) + R_L`` exactly -- the normal
+    construction, ``primitive = supercell[p2s_map]`` -- the answer depends only
+    on ``(i, j, L_I - L_J)``, so the ``N x N_p`` table the solver already holds
+    determines all of it and this is a gather. Pass the solver's cached
+    ``svec_frac`` / ``multi`` (``Phonon.smallest_vectors``, fractional in
+    ``primitive.cell``) and no image search runs at all.
+
+    Falls back to the direct ``N x N`` search when that decomposition does not
+    hold: ``map_I_to_iL`` pairs sorted position lists by rank, so it returns a
+    bijection even for a primitive/supercell pair the lattice points do not
+    relate, and ``(i, L)`` then carries no geometric meaning.
+    """
+    sc = supercell
+    if lattice_points is None:
+        lattice_points = get_lattice_points(primitive.cell, sc.cell,
+                                            extended=False)
+    lp = np.asarray(lattice_points, dtype=np.float64)
+    I2iL, iL2I = map_I_to_iL(primitive, sc, lattice_points=lp, tol=tol)
+    N_p, N_lp = len(primitive), len(lp)
+    iL2I = np.asarray(iL2I).reshape(N_p, N_lp)   # map_I_to_iL squeezes N_p == 1
+
+    L0 = int(np.argmin(la.norm(lp, axis=1)))
+    inv_cell = la.inv(np.asarray(sc.cell, dtype=np.float64)[:].T)
+
+    def _residual(delta):
+        return np.abs((delta @ inv_cell.T + 0.5) % 1.0 - 0.5).max()
+
+    # Two preconditions. The lattice points must reproduce the supercell
+    # positions, and the primitive basis must sit on the origin-cell atoms --
+    # `svec_frac` is measured from `primitive.positions`, and a primitive
+    # (rather than supercell) lattice offset between the two cannot be
+    # corrected afterwards because `mic` is not linear.
+    residual = max(
+        _residual(sc.positions[iL2I] - sc.positions[iL2I[:, L0]][:, None, :]
+                  - lp[None, :, :]),
+        _residual(sc.positions[iL2I[:, L0]] - np.asarray(primitive.positions)),
+    )
+    if residual > tol:
+        svec_frac, multi = get_smallest_vectors(sc, sc, tol=tol)
+        return _average_images(svec_frac, multi, sc.cell)
+
+    if svec_frac is None or multi is None:
+        svec_frac, multi = get_smallest_vectors(primitive, sc, tol=tol)
+    d = _average_images(svec_frac, multi, primitive.cell)          # (N, N_p, 3)
+
+    Lsub = _lattice_difference_table(lp, sc.cell, tol=tol)
+    i_of, L_of = I2iL[:, 0], I2iL[:, 1]
+    perm = iL2I[i_of[:, None], Lsub[L_of[None, :], L_of[:, None]]]
+    return d[perm, i_of[None, :], :]
+
+
+def _average_images(svec_frac, multi, cell):
+    """Mean over the tied images packed in ``svec_frac``, back in Cartesian."""
+    cart = np.asarray(svec_frac, dtype=np.float64) @ np.asarray(
+        cell, dtype=np.float64)
+    V_max = cart.shape[2]
+    keep = np.arange(V_max)[None, None, :] < np.asarray(multi)[:, :, None]
+    return np.einsum("kiv,kiva->kia", keep / multi[:, :, None], cart,
+                     optimize=True)
+
+
 def get_s2p_map(primitive, supercell, lattice_points=None, tol=1e-5):
     """1D map from supercell index to primitive atom index."""
     I2iL, _ = map_I_to_iL(primitive, supercell, lattice_points=lattice_points, tol=tol)
