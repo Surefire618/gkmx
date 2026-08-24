@@ -25,6 +25,7 @@ from ._log import Timer, talk, warn
 from ._resources import mode_block_peak_gb
 from .brillouin import get_symmetrized_array
 from .dynamical_matrix import DynamicalMatrix
+from .harmonic_flux import compute_harmonic_heat_flux_q, compute_harmonic_heat_flux_R
 from .interpolation import get_interpolation_data
 from .io import parse_force_constants
 from .kappa import get_kappa_BTE, qhgk_tau_eff
@@ -781,7 +782,7 @@ def _analytical_hfacfs(time_fs, tau_qs, cv_qs, v_qsa, v_qssa, w_qs, w_inv_qs,
 def get_kappa(dataset, fc_file=None, dmx_file=None,
               interpolate=False, nq_max=20, backend="numpy",
               precision=None, max_mem_gb=4.0, freq=None,
-              factorization="wick", analytical=False,
+              factorization="wick", analytical=False, harmonic_flux=False,
               lifetime_fit_cutoff=0.5,
               correct_finite_time=True,
               enforce_translational_invariance=True,
@@ -837,6 +838,13 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
         analytical: emit analytical BTE / QHGK time-resolved HFACFs
             alongside the simulated one (adds 4 × ``(Nt, 3, 3)`` arrays
             to the output).
+        harmonic_flux: emit the measured harmonic heat fluxes — real-space
+            ``J_hm-R`` (read from the trajectory, or rebuilt from the force
+            constants when it is absent) and its mode-space counterparts
+            ``J_hm-q`` and ``J_quasi-hm`` — each with its ACF and running
+            integral. Written as ``heat_flux_harmonic`` / ``heat_flux_harmonic_q`` /
+            ``heat_flux_QHGK_ta`` (plus ``_acf`` and ``_acf_integral``) on the
+            per-MD-step ``time_md`` axis.
         lifetime_fit_cutoff: ACF threshold for the per-mode exponential
             fit. Lower → fit further into the tail (more robust for
             long-tau modes, noisier for short-tau).
@@ -978,6 +986,11 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
         dataset.update({keys.fc_remapped: (keys.dim_fc_remapped, np.asarray(dmx.remapped))})
         dataset.attrs[keys.map_supercell_to_primitive] = np.asarray(dmx.I2iL_map[:, 0])
 
+    if dmx is None and harmonic_flux:
+        warn("harmonic_flux=True but no FC / DMX provided — the measured "
+             "harmonic fluxes need a mode decomposition and are skipped.",
+             prefix=_prefix)
+
     if dmx is None and interpolate:
         warn("interpolate=True but no FC / DMX provided — skipping "
              "mode-decomposition and interpolation, returning bare "
@@ -989,6 +1002,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
         max_mem_gb=max_mem_gb, freq=freq, precision=p.name,
         factorization=factorization,
         analytical=analytical,
+        harmonic_flux=harmonic_flux,
         lifetime_fit_cutoff=lifetime_fit_cutoff,
         correct_finite_time=correct_finite_time,
     )
@@ -1002,7 +1016,7 @@ def _get_gk_dataset(dataset, dmx=None, interpolate=False,
                      freq=None,
                      total=False, cross_offdiag=False, verbose=True,
                      backend="numpy", max_mem_gb=4.0, precision=None,
-                     factorization="wick", analytical=False,
+                     factorization="wick", analytical=False, harmonic_flux=False,
                      lifetime_fit_cutoff=0.5,
                      correct_finite_time=True):
     """HFACF -> integrated kappa -> cutoff times, plus optional mode decomposition."""
@@ -1098,7 +1112,7 @@ def _get_gk_dataset(dataset, dmx=None, interpolate=False,
         attrs["convention"] = dmx._convention
         timer()
 
-        data_ha = _get_gk_interpolate(
+        data_ha, dmx = _get_gk_interpolate(
             dataset, dmx=dmx, interpolate=interpolate,
             nq_max=nq_max, quasi_harmonic_greenkubo=quasi_harmonic_greenkubo,
             backend=backend, max_mem_gb=max_mem_gb,
@@ -1125,6 +1139,34 @@ def _get_gk_dataset(dataset, dmx=None, interpolate=False,
             data[keys.hf_acf_BTE_integral] = (keys.time_tensor, k_BTE)
             data[keys.hf_acf_QHGK] = (keys.time_tensor, C_QHGK)
             data[keys.hf_acf_QHGK_integral] = (keys.time_tensor, k_QHGK)
+            timer()
+
+        if harmonic_flux:
+            timer = Timer("Harmonic heat fluxes", prefix=_prefix)
+            J_hm_q, J_quasi_hm = compute_harmonic_heat_flux_q(
+                dataset, dmx, v_qssa=data_ha.v_qssa_cartesian,
+                dtype_u=p.real, verbose=verbose)
+            J_hm_R = (np.asarray(dataset[keys.heat_flux_harmonic], dtype=p.real)
+                      if keys.heat_flux_harmonic in dataset else None)
+            if J_hm_R is None or np.isnan(J_hm_R).any():
+                J_hm_R = compute_harmonic_heat_flux_R(
+                    dataset, dmx, dtype=p.real, verbose=verbose)
+            t_coord = np.asarray(
+                dataset.displacements[dataset.displacements.dims[0]])
+            data[keys.time_md] = (keys.time_md, t_coord)
+            for name, J, k_acf, k_int in (
+                    (keys.heat_flux_harmonic, J_hm_R,
+                     keys.hf_acf_ha, keys.hf_acf_ha_integral),
+                    (keys.heat_flux_harmonic_q, J_hm_q,
+                     keys.hf_acf_ha_q, keys.hf_acf_ha_q_integral),
+                    (keys.heat_flux_QHGK_ta, J_quasi_hm,
+                     keys.hf_acf_qhgk_ta, keys.hf_acf_qhgk_ta_integral)):
+                da = xr.DataArray(J, dims=keys.time_vec,
+                                  coords={keys.time: t_coord})
+                acf, cum = _get_hf_data(da, prefactor=gk_pf)
+                data[name] = (keys.time_md_vec, J)
+                data[k_acf] = (keys.time_md_tensor, np.asarray(acf))
+                data[k_int] = (keys.time_md_tensor, np.asarray(cum))
             timer()
 
         # The interpolation fields are absent when the commensurate grid cannot
@@ -1154,7 +1196,9 @@ def _get_gk_interpolate(dataset, dmx=None, interpolate=False,
         sol = getattr(dmx, "solution", None)
         have_vssq = sol is not None and getattr(sol, "v_qssa_cartesian", None) is not None
         if need_vssq and not have_vssq:
-            dmx = DynamicalMatrix.from_dataset(dataset, with_group_velocity_matrices=True)
+            dmx = DynamicalMatrix.from_dataset(
+                dataset, with_group_velocity_matrices=True,
+                convention=dmx._convention)
     else:
         dmx = DynamicalMatrix.from_dataset(dataset, with_group_velocity_matrices=need_vssq)
     timer()
@@ -1240,4 +1284,4 @@ def _get_gk_interpolate(dataset, dmx=None, interpolate=False,
         )
         data.update(results)
 
-    return collections.namedtuple("gk_ha_q_data", data.keys())(**data)
+    return collections.namedtuple("gk_ha_q_data", data.keys())(**data), dmx

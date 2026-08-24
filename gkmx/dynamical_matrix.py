@@ -195,9 +195,7 @@ class DynamicalMatrix:
         self._precision = precision
         p = Precision.from_str(precision)
         self._dtype_real, self._dtype_complex = p.real, p.complex
-
-        self._convention = convention
-
+        self._convention = str(convention).upper()
         self._phonon = Phonon(
             force_constants=fc,
             primitive=primitive,
@@ -578,7 +576,7 @@ class DynamicalMatrix:
 
     @classmethod
     def from_dataset(cls, dataset, with_group_velocity_matrices=False,
-                     backend="numpy", precision="fp64"):
+                     backend="numpy", precision="fp64", convention="TDEP"):
         """Build a DynamicalMatrix from a trajectory ``xr.Dataset``.
 
         Reads the primitive/supercell from ``dataset.attrs`` (encoded
@@ -592,10 +590,11 @@ class DynamicalMatrix:
             with_group_velocity_matrices: include QHGK off-diagonals.
             backend: ``"numpy"`` (default) or ``"jax"``.
             precision: ``"fp64"`` (default) or ``"fp32"``.
+            convention: velocity convention, as for ``DynamicalMatrix``.
         """
         prim = json2atoms(dataset.attrs[keys.reference_primitive])
         sc = json2atoms(dataset.attrs[keys.reference_supercell])
         fc = dataset[keys.fc]
         return cls(force_constants=fc, primitive=prim, supercell=sc,
                    with_group_velocity_matrices=with_group_velocity_matrices,
-                   backend=backend, precision=precision)
+                   backend=backend, precision=precision, convention=convention)

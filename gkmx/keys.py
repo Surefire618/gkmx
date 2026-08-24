@@ -19,7 +19,10 @@ q_i_j = (q, i, j)
 tensor = (a, b)
 
 time = "time"
-time_md = "time_md"  # full per-MD-step axis (sigma_per_sample, etc.)
+# Full per-MD-step axis, longer than the dropna'd heat_flux `time`.
+time_md = "time_md"
+time_md_vec = (time_md, a)
+time_md_tensor = (time_md, a, b)
 time_vec = (time, a)
 time_atom_vec = (time, I, a)
 time_tensor = (time, a, b)
@@ -123,6 +126,20 @@ hf_acf_BTE = _join(heat_flux, "BTE", _acf)
 hf_acf_BTE_integral = _join(hf_acf_BTE, integral)
 hf_acf_QHGK = _join(heat_flux, _QHGK, _acf)
 hf_acf_QHGK_integral = _join(hf_acf_QHGK, integral)
+
+# Time-resolved harmonic heat fluxes measured from the trajectory, as opposed
+# to the analytical `hf_acf_BTE` / `hf_acf_QHGK` kernels above. J_hm-R is
+# real-space and carries no mode resolution; the other two are its mode-space
+# reconstructions.
+heat_flux_harmonic = _join(heat_flux, _harmonic)          # J_hm-R, real space
+heat_flux_harmonic_q = _join(heat_flux_harmonic, "q")     # J_hm-q, diagonal
+heat_flux_QHGK_ta = _join(heat_flux, _QHGK, "ta")         # J_quasi-hm, full s,s'
+hf_acf_ha = _join(heat_flux_harmonic, _acf)
+hf_acf_ha_integral = _join(hf_acf_ha, integral)
+hf_acf_ha_q = _join(heat_flux_harmonic_q, _acf)
+hf_acf_ha_q_integral = _join(hf_acf_ha_q, integral)
+hf_acf_qhgk_ta = _join(heat_flux_QHGK_ta, _acf)
+hf_acf_qhgk_ta_integral = _join(hf_acf_qhgk_ta, integral)
 
 _interpolation_fit = _join(_interpolation, "fit")
 interpolation_fit_slope = _join(_interpolation_fit, "slope")

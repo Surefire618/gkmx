@@ -72,6 +72,17 @@ EXPECTED_VALUES = {
     "hf_acf_BTE_integral": "heat_flux_BTE_acf_integral",
     "hf_acf_QHGK": "heat_flux_QHGK_acf",
     "hf_acf_QHGK_integral": "heat_flux_QHGK_acf_integral",
+    # Measured harmonic fluxes (--harmonic-flux). These names are shared with
+    # FHI-vibes; changing one silently breaks a cross-code comparison.
+    "heat_flux_harmonic": "heat_flux_harmonic",
+    "heat_flux_harmonic_q": "heat_flux_harmonic_q",
+    "heat_flux_QHGK_ta": "heat_flux_QHGK_ta",
+    "hf_acf_ha": "heat_flux_harmonic_acf",
+    "hf_acf_ha_integral": "heat_flux_harmonic_acf_integral",
+    "hf_acf_ha_q": "heat_flux_harmonic_q_acf",
+    "hf_acf_ha_q_integral": "heat_flux_harmonic_q_acf_integral",
+    "hf_acf_qhgk_ta": "heat_flux_QHGK_ta_acf",
+    "hf_acf_qhgk_ta_integral": "heat_flux_QHGK_ta_acf_integral",
     "kappa_cumulative": "heat_flux_acf_integral",
     "kappa_cumulative_filtered": "heat_flux_acf_integral_filtered",
     # Standalone tags read by callers (brillouin.py, greenkubo.py).

@@ -110,6 +110,11 @@ def _add_gk_parser(subparsers):
         "--factorization", default="wick", choices=["wick", "vertex"],
         help="lifetime correlator: wick = SMA / dressed-bubble |g|² "
              "fit (default), vertex = un-factorized <nn>")
+    p.add_argument(
+        "--harmonic-flux", dest="harmonic_flux", action="store_true",
+        help="calculate harmonic heat fluxes: real-space J_hm-R and "
+             "its mode-space counterparts J_hm-q (particle-like diagonal) "
+             "and J_quasi-hm (quasi harmonic Green-Kubo)")
     p.add_argument("--freq", default=None, type=float,
                    help="filter-window frequency in THz; bypasses VDOS auto-detect")
     p.add_argument(
@@ -194,6 +199,7 @@ def _cmd_gk(args):
           f"interpolate={args.interpolate}, "
           f"precision={args.precision}, factorization={args.factorization}, "
           f"convention={args.convention}, "
+          f"harmonic_flux={args.harmonic_flux}, "
           f"lifetime_fit_cutoff={args.lifetime_fit_cutoff}, "
           f"correct_finite_time={args.correct_finite_time}")
 
@@ -209,6 +215,7 @@ def _cmd_gk(args):
         convention=args.convention,
         freq=args.freq,
         analytical=args.analytical,
+        harmonic_flux=args.harmonic_flux,
         lifetime_fit_cutoff=args.lifetime_fit_cutoff,
         correct_finite_time=args.correct_finite_time,
         enforce_translational_invariance=args.enforce_translational_invariance,
