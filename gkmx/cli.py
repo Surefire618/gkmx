@@ -118,7 +118,7 @@ def _add_gk_parser(subparsers):
     p.add_argument("--freq", default=None, type=float,
                    help="filter-window frequency in THz; bypasses VDOS auto-detect")
     p.add_argument(
-        "--convention", default="TDEP", choices=list(CONVENTIONS),
+        "--convention", default="PHONO3PY", choices=list(CONVENTIONS),
         help="velocity convention: the Bloch representative and the "
              "intra-multiplet basis v_ss' is reported in. Frequencies and "
              "raw GK are identical in all three; kappa_QHGK is not.")

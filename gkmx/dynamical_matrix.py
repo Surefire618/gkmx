@@ -152,7 +152,7 @@ class DynamicalMatrix:
                  with_group_velocity_matrices=False, backend="numpy",
                  precision="fp64", enforce_translational_invariance=True,
                  enforce_space_group=True,
-                 convention="TDEP"):
+                 convention="PHONO3PY"):
         """Build the adapter and solve on the commensurate q-grid.
 
         Args:
@@ -177,7 +177,7 @@ class DynamicalMatrix:
                 constants exactly as supplied, at the cost of Gamma acoustics
                 that do not sit at zero and a ``1/w`` that leaks into every
                 ``1/w``-weighted mode sum.
-            convention: ``"TDEP"`` (default), ``"PHONO3PY"``, or ``"RAW"``.
+            convention: ``"PHONO3PY"`` (default), ``"TDEP"``, or ``"RAW"``.
                 Frequencies are identical in all three; the degenerate
                 multiplet basis, ``v_qsa`` inside multiplets, and ``v_qssa``
                 off the diagonal are what the convention decides.
@@ -576,7 +576,7 @@ class DynamicalMatrix:
 
     @classmethod
     def from_dataset(cls, dataset, with_group_velocity_matrices=False,
-                     backend="numpy", precision="fp64", convention="TDEP"):
+                     backend="numpy", precision="fp64", convention="PHONO3PY"):
         """Build a DynamicalMatrix from a trajectory ``xr.Dataset``.
 
         Reads the primitive/supercell from ``dataset.attrs`` (encoded

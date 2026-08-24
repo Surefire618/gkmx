@@ -258,7 +258,7 @@ DEGENERACY_TOL = 1e-4 / C.omega_to_THz   # matches phonopy degenerate_sets cutof
 #   site average on v_qsa and on the whole v_qssa (phono3py-Kubo,
 #   group_velocity_matrix.py); reproduces phonopy's gv bit-level, at the
 #   cost of suppressed inter-band coherence.
-CONVENTIONS = ("TDEP", "PHONO3PY", "RAW")
+CONVENTIONS = ("PHONO3PY", "TDEP", "RAW")
 
 
 def degenerate_sets(w_qs, tol=DEGENERACY_TOL):
@@ -542,7 +542,7 @@ class Phonon:
     def __init__(self, force_constants, primitive, supercell,
                  backend="numpy", precision="fp64", p2s_map=None, factor=1.0,
                  enforce_translational_invariance=True,
-                 enforce_space_group=True, convention="TDEP"):
+                 enforce_space_group=True, convention="PHONO3PY"):
         """Build the solver.
 
         Args:
@@ -565,7 +565,7 @@ class Phonon:
                 site symmetry, and fitted FCs that break it get corrupted
                 averages instead (KI_B2_MLIP diag identity: 2.1e-1 raw,
                 1.6e-15 projected). Off = solve the FCs exactly as given.
-            convention: ``"TDEP"`` (default), ``"PHONO3PY"``, or ``"RAW"``;
+            convention: ``"PHONO3PY"`` (default), ``"TDEP"``, or ``"RAW"``;
                 decides the degenerate-multiplet basis, ``v_qsa`` there,
                 and the off-diagonal ``v_qssa``. See ``CONVENTIONS``.
         """

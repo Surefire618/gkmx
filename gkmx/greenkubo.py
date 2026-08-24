@@ -787,7 +787,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
               correct_finite_time=True,
               enforce_translational_invariance=True,
               enforce_space_group=True,
-              convention="TDEP"):
+              convention="PHONO3PY"):
     """Run the full Green-Kubo thermal-conductivity pipeline on an MD trajectory.
 
     The pipeline:
@@ -855,7 +855,7 @@ def get_kappa(dataset, fc_file=None, dmx_file=None,
         enforce_space_group: project the force constants onto the
             space-group-invariant subspace before solving; see ``Phonon``.
             Default ``True``.
-        convention: ``"TDEP"`` (default), ``"PHONO3PY"``, or ``"RAW"``; see
+        convention: ``"PHONO3PY"`` (default), ``"TDEP"``, or ``"RAW"``; see
             ``gkmx.phonon.CONVENTIONS``. The eigenvectors enter the mode
             projection, so tau and cv move with it and kappa_BTE moves too, not
             only kappa_QHGK. The raw HFACF kappa never sees it.
