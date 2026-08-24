@@ -42,12 +42,9 @@ def setup():
 def tdep_setup():
     """tdep_KI_bcc: TDEP-fitted constants, so multiplets survive away from TRIM.
 
-    KI_B2_MLIP cannot be used for anything about multiplet velocities. Its fitted
-    constants carry a 6.9 % ASR residual which splits every symmetry-forced
-    degeneracy except at TRIM, and at TRIM v = 0 by symmetry -- so all 3 of its
-    multiplets average to exactly zero (measured 6.4e-17 relative) and cannot
-    constrain the averaging. These constants give 58 multiplets, 56 of them with
-    a nonzero averaged velocity.
+    KI_B2_MLIP cannot constrain the averaging: its multiplets sit at TRIM,
+    where v = 0 by symmetry. These TDEP constants give 58 multiplets, 56 of
+    them with a nonzero averaged velocity.
     """
     d = Path(__file__).parent.parent / "datasets" / "tdep_KI_bcc"
     prim = ase_io.read(str(d / "geometry.in.primitive"), format="aims")
@@ -214,10 +211,11 @@ def test_convention_is_validated(setup):
     "TDEP" gives every member of a multiplet the subspace mean, averages the
     mode indices of v_qssa with Gamma(R, q), and carries the per-atom Bloch
     phase; "PHONO3PY" rotates the degenerate basis to diagonalise
-    dD/dq . probe and applies the Cartesian site average to v_qsa and to
-    every (s, s') pair of v_qssa (phono3py-Kubo); "RAW" applies nothing at
-    all. PHONO3PY and RAW both satisfy diag(v_qssa) == v_qsa by
-    construction."""
+    dD/dq . probe and applies the Cartesian site average to v_qsa, leaving
+    v_qssa branch-aligned but un-averaged (phono3py 3a706b1f); "RAW" applies
+    nothing at all. TDEP and RAW satisfy diag(v_qssa) == v_qsa; PHONO3PY does
+    not, because its v_qsa is site-averaged while its v_qssa is branch-aligned
+    -- two different operators."""
     prim, sc, fc, _, _ = setup
     assert set(CONVENTIONS) == {"TDEP", "PHONO3PY", "RAW"}
 
