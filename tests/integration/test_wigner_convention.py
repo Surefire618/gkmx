@@ -118,7 +118,7 @@ def test_wigner_label_split_equals_block_split_on_x(dmx_pair):
     sol = dmx_pair["WIGNER"].solution
     w = np.asarray(sol.w_qs)
     tau = np.ones_like(w)
-    kw = dict(tau_qs=tau, w_qs=w, w_inv_qs=np.asarray(sol.w_inv_qs))
+    kw = {"tau_qs": tau, "w_qs": w, "w_inv_qs": np.asarray(sol.w_inv_qs)}
     v = np.asarray(sol.v_qssa_cartesian)
 
     full = np.asarray(get_kappa_QHGK(v_qssa=v, **kw))

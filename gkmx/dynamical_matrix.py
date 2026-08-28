@@ -5,17 +5,16 @@ import xarray as xr
 from ase.geometry import get_distances
 
 from . import keys
+from ._log import warn
 from .brillouin import get_bz_mesh, get_q_grid
 from .io import atoms2json, json2atoms
-from ._log import warn
 from .lattice_points import (
     get_commensurate_q_points,
     get_lattice_points,
     get_s2p_map,
     map_I_to_iL,
 )
-from .phonon import (CONVENTIONS, Phonon, Solution, SolutionWithGVM,
-                     _align_degenerate_branches)
+from .phonon import CONVENTIONS, Phonon, Solution, SolutionWithGVM, _align_degenerate_branches
 from .precision import Precision
 
 
