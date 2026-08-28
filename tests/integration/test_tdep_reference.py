@@ -88,9 +88,12 @@ def fixture(request):
 
 
 def _solve(prim, sc, fc, q):
-    """gkmx solution at `q`, plus the raw (D, dD/dq) the convention map needs."""
+    """gkmx solution at `q`, plus the raw (D, dD/dq) the convention map needs.
+
+    Reproduction tests pin the convention they reproduce: TDEP/phonopy's
+    stored gv match the PHONO3PY site average, not the library default."""
     ph = Phonon(force_constants=fc, primitive=prim, supercell=sc,
-                backend="numpy", precision="fp64")
+                backend="numpy", precision="fp64", convention="PHONO3PY")
     sol = ph.solve(q, with_velocities=True, with_group_velocity_matrices=True)
     w2, e, M, D = _numpy_solve(
         ph._fc_mw, ph._j_of_k, ph._svec_frac, ph._multi_mask,

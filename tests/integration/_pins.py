@@ -9,7 +9,8 @@ KAPPA_RAW_REF = 0.11722172
 KAPPA_RAW_TOL = 1e-6
 
 # Cubic average of `thermal_conductivity_corrected` (size-extrapolated), W/mK.
-KAPPA_CORRECTED_REF = 0.33866448
+# Baked numpy/fp64 under the WIGNER default convention; jax lands 5.8e-4 away.
+KAPPA_CORRECTED_REF = 0.33223918
 KAPPA_CORRECTED_TOL = 2.5e-3
 
 # Anharmonicity score: std(f_DFT - f_harmonic) / std(f_DFT).

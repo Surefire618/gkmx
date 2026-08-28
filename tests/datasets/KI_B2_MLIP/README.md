@@ -10,7 +10,7 @@ and `SIGMA_REF` pins in `tests/integration/_pins.py`.
 | `geometry.in.supercell` | 128-atom 4×4×4 supercell |
 | `FORCE_CONSTANTS_tdep` | fc2, phonopy text format, `(2, 128, 3, 3)`, eV/Å²; extracted with TDEP from the trajectory below, projected onto the ASR + space-group-invariant subspace |
 | `nve/000000.nc` | 1000-step MLIP NVE trajectory at 303 K: positions, velocities, forces, heat flux, stress |
-| `DynamicalMatrix.nc` | cached solution on the commensurate 4×4×4 q-grid (64 q, 6 modes): `w_qs`, `v_qsa`, `v_qssa`, `e_qsi`, the FC as solved; fp64, PHONO3PY convention. Reference for the solver tests |
+| `DynamicalMatrix.nc` | cached solution on the commensurate 4×4×4 q-grid (64 q, 6 modes): `w_qs`, `v_qsa`, `v_qssa`, `e_qsi`, the FC as solved; fp64, WIGNER convention. Reference for the solver tests |
 
 **This is not a converged calculation.** It is sized to keep the test suite fast.
 Every κ below is a reproducible number for regression purposes, not a physical
@@ -28,10 +28,10 @@ Tail of the log (library default precision; the `_pins.py` values are baked at
 `--precision fp64`):
 
 ```
-[gkmx.interpolation]  Initial harmonic kappa:   0.158 W/mK
-[gkmx.interpolation]  Correction:               0.217 +/- 0.006 W/mK
+[gkmx.interpolation]  Initial harmonic kappa:   0.156 W/mK
+[gkmx.interpolation]  Correction:               0.215 +/- 0.007 W/mK
 [gkmx.interpolation]  Correction factor:        2.376
-[gkmx]  Corrected kappa: 0.335 W/mK
+[gkmx]  Corrected kappa: 0.332 W/mK
 ```
 
 Read the pinned scalar with:
