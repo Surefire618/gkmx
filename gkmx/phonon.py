@@ -249,7 +249,8 @@ DEGENERACY_TOL = 1e-4 / C.omega_to_THz   # matches phonopy degenerate_sets cutof
 
 # A convention decides the eigenvector basis inside degenerate multiplets,
 # v_qsa there, and v_qssa off the diagonal; frequencies and masks are
-# identical in all three, and diag(v_qssa) == v_qsa holds in all three.
+# identical in all of them. diag(v_qssa) == v_qsa holds in all but
+# PHONO3PY, whose v_qsa is site-averaged while v_qssa is branch-aligned.
 # RAW: eigh basis and native formulas, nothing applied.
 # TDEP: TDEP gauge (D_T = P D* P^dag, gkmx/tdep.py), Gamma(R, q) mode
 #   average + branch alignment; reproduces TDEP's stored gv, velocity
@@ -258,7 +259,13 @@ DEGENERACY_TOL = 1e-4 / C.omega_to_THz   # matches phonopy degenerate_sets cutof
 #   site average on v_qsa and on the whole v_qssa (phono3py-Kubo,
 #   group_velocity_matrix.py); reproduces phonopy's gv bit-level, at the
 #   cost of suppressed inter-band coherence.
-CONVENTIONS = ("PHONO3PY", "TDEP", "RAW")
+# WIGNER: multiplets rotated so the bare operator's v^x is diagonal
+#   (x-degenerate subgroups broken by y, then z); no little-group or site
+#   average. -- Simoncelli PRX 12, 041011 (2022)
+# TDEP is the only convention that is NOT an intra-block unitary (its
+# little-group average is a contraction), so basis-invariance assertions
+# hold across RAW / PHONO3PY / WIGNER but never include TDEP.
+CONVENTIONS = ("PHONO3PY", "TDEP", "RAW", "WIGNER")
 
 
 def degenerate_sets(w_qs, tol=DEGENERACY_TOL):
@@ -279,11 +286,13 @@ def degenerate_sets(w_qs, tol=DEGENERACY_TOL):
                 start = si
 
 
-def _align_degenerate_branches(w2, e_qsi, v_qssa, v_qsa):
+def _align_degenerate_branches(w2, e_qsi, v_qssa, v_qsa, order=None):
     """Fix the eigh gauge inside each degenerate block ``B``.
 
-    Diagonalize the averaged velocity block ``V_B^a = v_qssa[q, B, B, a]``
+    Diagonalize the velocity block ``V_B^a = v_qssa[q, B, B, a]``
     with one unitary ``Q`` (components ``a`` in decreasing-structure order,
+    or in the fixed ``order`` when given -- WIGNER passes ``(0, 1, 2)`` so
+    the primary diagonalized direction is x;
     later ones acting inside the earlier ones' degenerate subgroups), then
 
         e_B            <-  Q^T e_B
@@ -329,7 +338,7 @@ def _align_degenerate_branches(w2, e_qsi, v_qssa, v_qsa):
         groups = [np.arange(mb)]
         # decreasing-structure order: an eigh of a noise-level component
         # would lock in a garbage basis before the real structure is seen
-        for a in np.argsort(spreads)[::-1]:
+        for a in (np.argsort(spreads)[::-1] if order is None else order):
             Ba = Q.conj().T @ B_avg[:, :, a] @ Q
             newgroups = []
             for g in groups:
@@ -542,7 +551,7 @@ class Phonon:
     def __init__(self, force_constants, primitive, supercell,
                  backend="numpy", precision="fp64", p2s_map=None, factor=1.0,
                  enforce_translational_invariance=True,
-                 enforce_space_group=True, convention="PHONO3PY"):
+                 enforce_space_group=True, convention="WIGNER"):
         """Build the solver.
 
         Args:
@@ -565,7 +574,8 @@ class Phonon:
                 site symmetry, and fitted FCs that break it get corrupted
                 averages instead (KI_B2_MLIP diag identity: 2.1e-1 raw,
                 1.6e-15 projected). Off = solve the FCs exactly as given.
-            convention: ``"PHONO3PY"`` (default), ``"TDEP"``, or ``"RAW"``;
+            convention: ``"WIGNER"`` (default), ``"PHONO3PY"``,
+                ``"TDEP"``, or ``"RAW"``;
                 decides the degenerate-multiplet basis, ``v_qsa`` there,
                 and the off-diagonal ``v_qssa``. See ``CONVENTIONS``.
         """
@@ -757,7 +767,8 @@ class Phonon:
         # TDEP defines v_qsa through the averaged block operator, so the
         # operator pipeline runs even without with_group_velocity_matrices:
         # both solve paths must return identical v_qsa.
-        if not with_group_velocity_matrices and self.convention != "TDEP":
+        if (not with_group_velocity_matrices
+                and self.convention not in ("TDEP", "WIGNER")):
             return Solution(
                 w_qs=w_qs, w_inv_qs=w_inv_qs, w2_qs=w2_qs,
                 v_qsa_cartesian=v_qsa, e_qsi=e_qsi, D_qij=D_qij,
@@ -793,6 +804,17 @@ class Phonon:
             v_qssa = np.where(band_mask[:, :, :, None], v_qssa, 0.0)
             e_qsi, v_qssa, _ = _align_degenerate_branches(
                 w2, e_qsi, v_qssa, v_qsa)
+        elif self.convention == "WIGNER":
+            # Simoncelli PRX 12, 041011 (2022) Sec. II
+            # eigenvectors chosen so the velocity operator is diagonal inside
+            # each degenerate multiplet along a fixed direction (x; residual
+            # x-degenerate subgroups broken by y, then z). The operator is
+            # the bare smooth-convention dD/dq -- no little-group or site
+            # average. Along x coherences are cross-multiplet only; v^y and
+            # v^z keep intra-multiplet off-diagonals (non-commuting).
+            v_qssa = np.where(band_mask[:, :, :, None], v_qssa, 0.0)
+            e_qsi, v_qssa, v_qsa = _align_degenerate_branches(
+                w2, e_qsi, v_qssa, v_qsa, order=(0, 1, 2))
 
         if not with_group_velocity_matrices:
             return Solution(

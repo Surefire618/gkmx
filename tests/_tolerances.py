@@ -22,5 +22,5 @@ TOL_DEGENERATE_BASIS = 2e-2
 
 # fp32-vs-fp64 agreement of the velocity operator, compared per
 # (q, degenerate block) row power. For the parity test in test_phonon;
-# measured 9e-7 on KI_B2_MLIP over all three conventions.
+# measured 6.4e-7..7.5e-7 on KI_B2_MLIP over all conventions.
 TOL_FP32_BLOCK_POWER = 1e-5

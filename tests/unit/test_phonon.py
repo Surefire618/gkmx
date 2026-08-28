@@ -141,7 +141,7 @@ def test_fp32_velocity_operator_matches_fp64(setup):
     acoustic-gate floor, the pre-average band mask, and the frequency-block
     G projection: with any of them reverted the TDEP mode average smears
     1/(2 sqrt(w w')) Gamma-acoustic garbage into live modes (5-38x
-    inflation before the gate-floor fix). Measured 7.3e-7..9.1e-7."""
+    inflation before the gate-floor fix). Measured 6.4e-7..7.5e-7."""
     prim, sc, fc, q, _ = setup
     for c in CONVENTIONS:
         rp = {}
@@ -213,11 +213,12 @@ def test_convention_is_validated(setup):
     phase; "PHONO3PY" rotates the degenerate basis to diagonalise
     dD/dq . probe and applies the Cartesian site average to v_qsa, leaving
     v_qssa branch-aligned but un-averaged (phono3py 3a706b1f); "RAW" applies
-    nothing at all. TDEP and RAW satisfy diag(v_qssa) == v_qsa; PHONO3PY does
-    not, because its v_qsa is site-averaged while its v_qssa is branch-aligned
-    -- two different operators."""
+    nothing at all; "WIGNER" rotates each multiplet so the bare operator's
+    v^x is diagonal. TDEP, RAW and WIGNER satisfy diag(v_qssa) == v_qsa;
+    PHONO3PY does not, because its v_qsa is site-averaged while its v_qssa is
+    branch-aligned -- two different operators."""
     prim, sc, fc, _, _ = setup
-    assert set(CONVENTIONS) == {"TDEP", "PHONO3PY", "RAW"}
+    assert set(CONVENTIONS) == {"TDEP", "PHONO3PY", "RAW", "WIGNER"}
 
     for convention in CONVENTIONS:
         ph = Phonon(force_constants=fc, primitive=prim, supercell=sc,

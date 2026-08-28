@@ -2,9 +2,9 @@
 
 Each convention reports `e_qsi` in the Bloch representative its `v_ss'` is
 defined in. `_build_e_qsI` remaps them onto the supercell against the phase
-origin that representative pairs with, so all three projectors select the same
+origin that representative pairs with, so every convention's projector selects the same
 physical branch. The mode amplitude is then convention-free, and so is anything
-fitted from it: outside a degenerate multiplet tau is identical in all three,
+fitted from it: outside a degenerate multiplet tau is identical in all of them,
 which is what this test measures.
 
 Resolution scales with the per-atom phase `exp(-2 pi i q . r_a)`, so the sharper
@@ -49,9 +49,11 @@ def kappa_per_convention(request):
     fc_name = FIXTURES[name]
     fc_file = str(DATA_ROOT / name / fc_name) if fc_name else None
     ds = xr.open_dataset(traj, engine="h5netcdf").load()
-    return name, {c: get_kappa(ds, fc_file=fc_file, interpolate=False,
-                               precision="fp64", convention=c)
-                  for c in CONVENTIONS}
+    out = {}
+    for c in CONVENTIONS:
+        out[c] = get_kappa(ds, fc_file=fc_file, interpolate=False,
+                           precision="fp64", convention=c)
+    return name, out
 
 
 def _non_degenerate(w_qs, tol=DEGENERACY_TOL):

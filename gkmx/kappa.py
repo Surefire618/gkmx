@@ -45,6 +45,57 @@ def get_kappa_BTE(v_qsa, tau_qs, cv_qs=None, weights=None, scalar=False):
     return result
 
 
+def qhgk_block_mask(w_qs):
+    """Boolean ``(Nq, Ns, Ns)``: True on the diagonal and inside each
+    degenerate multiplet (``phonon.degenerate_sets`` partition)."""
+    from .phonon import degenerate_sets
+
+    w = np.abs(np.asarray(w_qs))
+    Nq, Ns = w.shape
+    mask = np.zeros((Nq, Ns, Ns), dtype=bool)
+    idx = np.arange(Ns)
+    mask[:, idx, idx] = True
+    for qi, start, stop in degenerate_sets(w):
+        mask[qi, start:stop, start:stop] = True
+    return mask
+
+
+def get_kappa_QHGK_block_split(v_qssa, tau_qs, w_qs, w_inv_qs, cv_qs=None,
+                                weights=None, scalar=False, tol=1e-4):
+    """Population / coherence split of ``kappa_QHGK``.
+
+    The degenerate-state prescription of Simoncelli, Marzari & Mauri,
+    PRX 12, 041011 (2022) -- diagonal or degenerate velocity-operator
+    elements contribute exclusively to the populations conductivity -- in
+    rotation-free form: the whole intra-multiplet block is summed as is,
+    which is unitary-invariant for the full tensor at once.
+
+        kappa_P = pairs with w_s == w_s'  (s == s' plus the off-diagonals
+                  inside each degenerate multiplet)
+        kappa_C = cross-multiplet pairs only
+
+    Every pair term is counted once, in full: kappa_P + kappa_C equals
+    ``get_kappa_QHGK`` exactly. Unlike the label split (s == s' vs s != s'),
+    this partition is invariant under the intra-multiplet eigh gauge -- the
+    label split's diagonal moves O(1) under valid basis rotations on
+    degenerate-heavy grids -- and it converges to the label split on dense
+    meshes as the multiplet weight thins (~1/nq). Degenerate off-diagonals
+    carry population scaling (|v|^2 / Gamma, divergent as gamma -> 0), which
+    is the theory ground for assigning them to kappa_P.
+
+    Returns ``(kappa_P, kappa_C)``, same shapes/units as ``get_kappa_QHGK``.
+    """
+    v = np.asarray(v_qssa)
+    mask = qhgk_block_mask(w_qs)[..., None]
+    kappa_P = get_kappa_QHGK(np.where(mask, v, 0.0), tau_qs, w_qs, w_inv_qs,
+                             cv_qs=cv_qs, weights=weights, scalar=scalar,
+                             tol=tol)
+    kappa_C = get_kappa_QHGK(np.where(mask, 0.0, v), tau_qs, w_qs, w_inv_qs,
+                             cv_qs=cv_qs, weights=weights, scalar=scalar,
+                             tol=tol)
+    return kappa_P, kappa_C
+
+
 def qhgk_tau_eff(w_qs, w_inv_qs, tau_qs, tol=1e-4):
     """Off-diagonal QHGK effective lifetime ``tau_eff[q, s, s']``, shape ``(Nq, Ns, Ns)``.
 

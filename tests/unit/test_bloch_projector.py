@@ -63,8 +63,9 @@ def test_projector_is_convention_independent(name):
 
     projectors, freqs = {}, None
     for conv in CONVENTIONS:
-        dmx = DynamicalMatrix(force_constants=fc, primitive=prim, supercell=sc,
-                              precision="fp64", convention=conv)
+        dmx = DynamicalMatrix(force_constants=fc, primitive=prim,
+                              supercell=sc, precision="fp64",
+                              convention=conv)
         projectors[conv] = np.asarray(dmx.e_qsI)
         if freqs is None:
             freqs = np.asarray(dmx.w_qs)

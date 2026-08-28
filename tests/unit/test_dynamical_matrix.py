@@ -154,10 +154,12 @@ def test_velocity_matrix_diagonal_is_group_velocity(fixture, convention):
             str(d / "FORCE_CONSTANTS_tdep"), two_dim=False))
     dmx = DynamicalMatrix(
         force_constants=fc,
-        primitive=ase_io.read(str(d / "geometry.in.primitive"), format="aims"),
-        supercell=ase_io.read(str(d / "geometry.in.supercell"), format="aims"),
-        with_group_velocity_matrices=True, backend="numpy", precision="fp64",
-        convention=convention)
+        primitive=ase_io.read(str(d / "geometry.in.primitive"),
+                              format="aims"),
+        supercell=ase_io.read(str(d / "geometry.in.supercell"),
+                              format="aims"),
+        with_group_velocity_matrices=True, backend="numpy",
+        precision="fp64", convention=convention)
 
     v_qssa = np.asarray(dmx.solution.v_qssa_cartesian)
     diag = np.einsum("qssa->qsa", v_qssa).real

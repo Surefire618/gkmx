@@ -7,13 +7,15 @@ from ase.geometry import get_distances
 from . import keys
 from .brillouin import get_bz_mesh, get_q_grid
 from .io import atoms2json, json2atoms
+from ._log import warn
 from .lattice_points import (
     get_commensurate_q_points,
     get_lattice_points,
     get_s2p_map,
     map_I_to_iL,
 )
-from .phonon import CONVENTIONS, Phonon, Solution, SolutionWithGVM
+from .phonon import (CONVENTIONS, Phonon, Solution, SolutionWithGVM,
+                     _align_degenerate_branches)
 from .precision import Precision
 
 
@@ -152,7 +154,7 @@ class DynamicalMatrix:
                  with_group_velocity_matrices=False, backend="numpy",
                  precision="fp64", enforce_translational_invariance=True,
                  enforce_space_group=True,
-                 convention="PHONO3PY"):
+                 convention="WIGNER"):
         """Build the adapter and solve on the commensurate q-grid.
 
         Args:
@@ -177,8 +179,9 @@ class DynamicalMatrix:
                 constants exactly as supplied, at the cost of Gamma acoustics
                 that do not sit at zero and a ``1/w`` that leaks into every
                 ``1/w``-weighted mode sum.
-            convention: ``"PHONO3PY"`` (default), ``"TDEP"``, or ``"RAW"``.
-                Frequencies are identical in all three; the degenerate
+            convention: ``"WIGNER"`` (default), ``"PHONO3PY"``,
+                ``"TDEP"``, or ``"RAW"``.
+                Frequencies are identical in all of them; the degenerate
                 multiplet basis, ``v_qsa`` inside multiplets, and ``v_qssa``
                 off the diagonal are what the convention decides.
         """
@@ -419,6 +422,25 @@ class DynamicalMatrix:
         else:
             ir_sol = self.get_solution(q_points=q_grid.ir.points, **kwargs)
             sol = get_full_solution_from_ir(q_grid, ir_sol, **kwargs)
+            # The ir->full rotation mixes Cartesian components, so the
+            # WIGNER multiplet basis (v^x diagonal) does not survive the
+            # expansion; re-align on the expanded operator.
+            if self._convention == "WIGNER":
+                if getattr(sol, "v_qssa_cartesian", None) is not None:
+                    e_qsi, v_qssa, v_qsa = _align_degenerate_branches(
+                        np.asarray(sol.w2_qs), np.asarray(sol.e_qsi),
+                        np.asarray(sol.v_qssa_cartesian),
+                        np.asarray(sol.v_qsa_cartesian), order=(0, 1, 2))
+                    sol = sol._replace(
+                        e_qsi=e_qsi.astype(np.asarray(sol.e_qsi).dtype),
+                        v_qssa_cartesian=v_qssa.astype(
+                            np.asarray(sol.v_qssa_cartesian).dtype),
+                        v_qsa_cartesian=v_qsa.astype(
+                            np.asarray(sol.v_qsa_cartesian).dtype))
+                else:
+                    warn("WIGNER on an expanded full mesh without the "
+                         "velocity operator: per-mode v_qsa keeps the "
+                         "rotated (non-x-diagonal) multiplet basis.")
 
         return q_grid, sol
 
@@ -576,7 +598,7 @@ class DynamicalMatrix:
 
     @classmethod
     def from_dataset(cls, dataset, with_group_velocity_matrices=False,
-                     backend="numpy", precision="fp64", convention="PHONO3PY"):
+                     backend="numpy", precision="fp64", convention="WIGNER"):
         """Build a DynamicalMatrix from a trajectory ``xr.Dataset``.
 
         Reads the primitive/supercell from ``dataset.attrs`` (encoded
