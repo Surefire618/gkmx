@@ -131,6 +131,10 @@ def test_block_split_moves_weight_off_the_label_split(solutions):
                                       np.full(shape, 1e-5)))
     label_C = float(np.mean(np.diag(kQ - k_diag)))
     block_C = float(np.mean(np.diag(kC)))
-    assert block_C <= label_C, (
+    # Equality case (a fixture with no multiplet weight, e.g. LiCdBO3):
+    # the two sides come from different code paths and can round an ulp
+    # either way across BLAS builds -- CI flipped it by 4e-15 relative.
+    scale = abs(float(np.mean(np.diag(kQ))))
+    assert block_C <= label_C + TOL_FP64 * scale, (
         f"block kappa_C ({block_C:.6g}) exceeds label kappa_C "
         f"({label_C:.6g})")
