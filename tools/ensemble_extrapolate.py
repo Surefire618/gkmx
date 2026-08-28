@@ -109,6 +109,71 @@ def load_ensemble(files):
     )
 
 
+def write_ensemble_nc(files, path, convention=None):
+    """Ensemble-mean curve dataset for ``tools/plot_harmonic_flux.py``.
+
+    Averages every ACF/integral curve over the runs that carry it (fields
+    from runs without ``--harmonic-flux`` are simply absent), truncating to
+    the shortest run per time axis, plus the mean kappa tensors. Attrs record
+    the convention, per-field run counts and the source files.
+    """
+    curve_keys = [keys.hf_acf, keys.hf_acf + "_" + keys.integral,
+                  keys.hf_acf_ha, keys.hf_acf_ha_integral,
+                  keys.hf_acf_ha_q, keys.hf_acf_ha_q_integral,
+                  keys.hf_acf_qhgk_ta, keys.hf_acf_qhgk_ta_integral,
+                  keys.hf_acf_BTE, keys.hf_acf_BTE_integral,
+                  keys.hf_acf_QHGK, keys.hf_acf_QHGK_integral]
+    tensor_keys = ["thermal_conductivity", "thermal_conductivity_corrected"]
+    acc, counts, template = {}, {}, {}
+    convs, vols, temps = set(), [], []
+    for f in files:
+        ds = xr.open_dataset(f, engine="h5netcdf")
+        convs.add(ds.attrs.get("convention"))
+        if keys.volume in ds.attrs:
+            vols.append(float(ds.attrs[keys.volume]))
+        if keys.temperature in ds:
+            temps.append(float(np.nanmean(np.asarray(ds[keys.temperature]))))
+        for k in curve_keys + tensor_keys:
+            if k not in ds:
+                continue
+            arr = np.asarray(ds[k].data, dtype=np.float64)
+            if k in acc:
+                n = min(acc[k].shape[0], arr.shape[0]) if arr.ndim > 2 else None
+                if n is not None:
+                    acc[k] = acc[k][:n] + arr[:n]
+                    template[k] = (template[k][0], template[k][1][:n])
+                else:
+                    acc[k] = acc[k] + arr
+                counts[k] += 1
+            else:
+                acc[k] = arr.copy()
+                counts[k] = 1
+                dims = ds[k].dims
+                tcoord = (np.asarray(ds[dims[0]]) if arr.ndim > 2 else None)
+                template[k] = (dims, tcoord)
+        ds.close()
+    data = {}
+    for k, total in acc.items():
+        dims, tcoord = template[k]
+        mean = total / counts[k]
+        coords = {dims[0]: tcoord} if tcoord is not None else None
+        data[k] = xr.DataArray(mean[:len(tcoord)] if tcoord is not None
+                               else mean, dims=dims, coords=coords)
+    named = {c for c in convs if c}
+    out = xr.Dataset(data, attrs={
+        "convention": convention or (named.pop() if len(named) == 1 else "mixed"),
+        **({keys.volume: float(np.mean(vols))} if vols else {}),
+        **({"temperature": float(np.mean(temps))} if temps else {}),
+        "ensemble_n_runs": max(counts.values()) if counts else 0,
+        "ensemble_field_counts": json.dumps(counts),
+        "ensemble_files": json.dumps([str(f) for f in files]),
+    })
+    path.parent.mkdir(parents=True, exist_ok=True)
+    enc = {v: {"zlib": True} for v in out.data_vars}
+    out.to_netcdf(path, engine="h5netcdf", encoding=enc, invalid_netcdf=True)
+    return counts
+
+
 def union_training_set(q_sets, w2_sets, tau_sets, talk=print):
     """Union several supercells' commensurate q-points into one training set.
 
@@ -283,7 +348,23 @@ def main(argv=None):
     ap.add_argument("--max-mem-gb", type=float, default=6.0)
     ap.add_argument("-o", "--out", type=Path, default=None,
                     help="results JSON (default: print to stdout)")
+    ap.add_argument("--nc-out", type=Path, default=None,
+                    help="also write the ensemble-mean curve dataset "
+                         "(ACFs + integrals + kappa tensors) for "
+                         "tools/plot_harmonic_flux.py")
+    ap.add_argument("--curves-only", action="store_true",
+                    help="write --nc-out and stop (skip the extrapolation)")
     args = ap.parse_args(argv)
+
+    if args.curves_only:
+        if args.nc_out is None:
+            raise SystemExit("--curves-only requires --nc-out")
+        counts = write_ensemble_nc(args.files, args.nc_out,
+                                   convention=args.convention)
+        print(f"{args.nc_out}: ensemble-mean curves over "
+              f"{max(counts.values()) if counts else 0} runs "
+              f"({len(counts)} fields)")
+        return
 
     ens = load_ensemble(args.files)
     q_sets, tau_sets = [ens.q_points], [ens.tau_mean]
@@ -334,6 +415,9 @@ def main(argv=None):
             raw_mean + np.asarray(result[f"correction_ab{sfx}"])).tolist()
         out[f"kappa_corrected_scalar{sfx}"] = float(
             scal.mean() + result[f"correction{sfx}"])
+
+    if args.nc_out is not None:
+        write_ensemble_nc(args.files, args.nc_out, convention=convention)
 
     text = json.dumps(out, indent=2)
     if args.out:
