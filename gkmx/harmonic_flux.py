@@ -163,20 +163,24 @@ def compute_harmonic_heat_flux_q(dataset, dmx, v_qssa=None, t_chunk=None,
     from ``(w, v, tau, cv)``, these are *measured*: the trajectory is projected
     onto modes and the flux is reassembled per time step::
 
-        J_hm-q_a(t)     = 1/V  sum_qs   E_qs(t) v_qsa,   E_qs = 2 |a_qs|^2 w2_qs
-        J_quasi-hm_a(t) = 1/V  Re[ i sum_q sum_ss'  sqrt(w_qs w_qs') v_qss'a
-                                   p_qs(t) conj(u_qs'(t)) ]
+        J_hm-q_a(t) = 1/V  sum_qs  E_qs(t) v_qsa,   E_qs = 2 |a_qs|^2 w2_qs
+        J_res_a(t)  = 1/V  sum_q sum_ss'  v_qss'a (w_qs + w_qs')/2
+                          sqrt(w_qs w_qs')  A*_qs A_qs'
+        J_anti_a(t) = 1/2V sum_q sum_ss'  v_qss'a (w_qs - w_qs')/2
+                          sqrt(w_qs w_qs') [ A*_qs A*_-qs' - A_qs A_-qs' ]
+        J_quasi-hm  = J_res + J_anti
 
     with ``u_qs = sum_I e_qsI sqrt(m_I) u_I`` and ``p_qs`` likewise from the
     ASE-native velocities. ``J_hm-q`` keeps only ``s == s'`` (the
     particle-like channel); ``J_quasi-hm`` sums the whole block.
 
-    ``J_quasi-hm`` is the pair (``r0``) term of ``J_hm-R`` in mode variables:
-    in the amplitudes ``a, b = (u_qs -+ i w^-1 p_qs)/2`` it carries the
-    resonant ``a a*`` and the antiresonant ``a b*`` bilinears, with the
-    conjugation consistent with the ``e``-projection above (``u_qs`` is the
-    conjugate of the true expansion coefficient, so the operator pairs as
-    ``p v u*``). Exactness is convention-conditional: with the native
+    ``J_quasi-hm`` is the pair (``r0``) term of ``J_hm-R`` in mode variables,
+    built from the channels (dissertation Eqs. ``hf_res`` / ``hf_antires``):
+    the projections are conjugates of the true expansion coefficients
+    (``u_qs = c*_qs``), so ``(u_qs + i w^-1 p_qs)/2 = A*_qs`` and
+    ``(u_qs - i w^-1 p_qs)/2 = A_-qs``, and each row realizes every bilinear
+    of the two equations once (absorbing the antiresonant ``1/2``;
+    ``v(-q) = -conj(v(q))``). Exactness is convention-conditional: with the native
     operator (RAW, PHONO3PY) ``J_hm-R - J_quasi-hm`` is the displacement
     term alone on the commensurate grid; under TDEP the little-group-averaged
     operator makes the reconstruction the TDEP model's own pair flux. The
@@ -215,7 +219,7 @@ def compute_harmonic_heat_flux_q(dataset, dmx, v_qssa=None, t_chunk=None,
     if v_qssa is None:
         v_qssa = dmx.solution.v_qssa_cartesian
     v_qssa = np.asarray(v_qssa, dtype=dtype_c)
-    # The bilinear p v u* is eigh-gauge-invariant only when the operator
+    # The channel bilinears are eigh-gauge-invariant only when the operator
     # carries the projector's conjugation flavor. TDEP's e_qsI is built from
     # conj(e_qsi) (`_build_e_qsI`), so its operator enters conjugated;
     # RAW / PHONO3PY are native, which is also the exact-identity flavor.
@@ -232,11 +236,21 @@ def compute_harmonic_heat_flux_q(dataset, dmx, v_qssa=None, t_chunk=None,
     m_sqrt = np.sqrt(np.asarray(_masses.of(dmx.supercell))).astype(dtype_u)
     volume = float(np.nanmean(np.asarray(dataset[keys.volume])))
 
-    J_hm_q = np.zeros((Nt, 3), dtype=dtype_u)
-    J_quasi_hm = np.zeros((Nt, 3), dtype=dtype_u)
+    # Channel weights folded into conjugated operators once: a channel term
+    # Re[X_s (v W conj(Y))_s] then contracts as X.re (C Y).re + X.im (C Y).im.
+    w_gate = np.where(w_qs < 1e-4, dtype_u(0.0), w_qs)
+    Cres = np.conj(v_qssa) * (dtype_u(0.5)
+                              * (w_gate[:, :, None] + w_gate[:, None, :]))[..., None]
+    Canti = np.conj(v_qssa) * (dtype_u(0.5)
+                               * (w_gate[:, :, None] - w_gate[:, None, :]))[..., None]
 
-    # Live at the peak, in units of one real (3N, t_chunk) plane: U + V (2),
-    # u_c + p_c (2), the four projections (4), P + Uc complex (4) = 12.
+    J_hm_q = np.zeros((Nt, 3), dtype=dtype_u)
+    J_res = np.zeros((Nt, 3), dtype=dtype_u)
+    J_anti = np.zeros((Nt, 3), dtype=dtype_u)
+
+    # Live at the peak, in units of one real (3N, t_chunk) plane: the four
+    # projections + a + b (8), or the complex amplitude pair + one channel
+    # Z pair (8); 12 kept as the sizing bound.
     br = np.dtype(dtype_u).itemsize
     row = 12 * 3 * (I // 3) * br
     if t_chunk is None:
@@ -260,32 +274,56 @@ def compute_harmonic_heat_flux_q(dataset, dmx, v_qssa=None, t_chunk=None,
         u_re, u_im = e_re @ u_c, e_im @ u_c
         p_re, p_im = e_re @ p_c, e_im @ p_c
         del u_c, p_c
+        # a = A*_qs; b = A_-qs, its time-reversal partner in the same row
+        # (the projections are conjugates of the true coefficients).
         a_re = dtype_u(0.5) * (u_re - w_inv_m[:, None] * p_im)
         a_im = dtype_u(0.5) * (u_im + w_inv_m[:, None] * p_re)
+        b_re = dtype_u(0.5) * (u_re + w_inv_m[:, None] * p_im)
+        b_im = dtype_u(0.5) * (u_im - w_inv_m[:, None] * p_re)
+        del u_re, u_im, p_re, p_im
 
         E = dtype_u(2.0) * (a_re * a_re + a_im * a_im) * w2_m[:, None]
         J_hm_q[t0:t1] = (E.T @ v_ma) / dtype_u(volume)
-        del E, a_re, a_im
+        del E
 
-        # sqrt(w_s w_s') split one factor per side. Built in place:
+        # Ast = sqrt(w) A*_qs, Amq = sqrt(w) A_-qs. Built in place:
         # `re + 1j * im` would promote to complex128 and blow the fp32 bound.
-        Uc = np.empty((Nq, Ns, tc), dtype=dtype_c)
-        Uc.real = u_re.reshape(Nq, Ns, tc)
-        Uc.imag = -u_im.reshape(Nq, Ns, tc)                    # conj(u_qs)
-        Uc *= w_sqrt[..., None]
-        del u_re, u_im
-        P = np.empty((Nq, Ns, tc), dtype=dtype_c)
-        P.real = p_re.reshape(Nq, Ns, tc)
-        P.imag = p_im.reshape(Nq, Ns, tc)
-        P *= w_sqrt[..., None]
-        del p_re, p_im
+        Ast = np.empty((Nq, Ns, tc), dtype=dtype_c)
+        Ast.real = a_re.reshape(Nq, Ns, tc)
+        Ast.imag = a_im.reshape(Nq, Ns, tc)
+        Ast *= w_sqrt[..., None]
+        del a_re, a_im
+        Amq = np.empty((Nq, Ns, tc), dtype=dtype_c)
+        Amq.real = b_re.reshape(Nq, Ns, tc)
+        Amq.imag = b_im.reshape(Nq, Ns, tc)
+        Amq *= w_sqrt[..., None]
+        del b_re, b_im
         # One Cartesian component at a time, so the (Nq,Ns,Ns,tc) outer
-        # product never exists. Re[i z] = -Im[z].
+        # product never exists. Per row:
+        #   J_res:  + Ast conj(Ast) = A*_qs A_qs' at +q,
+        #           - Amq conj(Amq) = the -q term  (v(-q) = -conj v)
+        #   J_anti: + Ast conj(Amq) = A*_qs A*_-qs',
+        #           - Amq conj(Ast) = -A_qs A_-qs'
         for ia in range(3):
-            tmp = np.einsum("qsS,qSt->qst", v_qssa[..., ia], Uc, optimize=True)
-            J_quasi_hm[t0:t1, ia] = -np.imag(
-                np.einsum("qst,qst->t", P, tmp, optimize=True)) / dtype_u(volume)
-            del tmp
-        del P, Uc
+            Z1 = np.einsum("qsS,qSt->qst", Cres[..., ia], Ast, optimize=True)
+            Z2 = np.einsum("qsS,qSt->qst", Cres[..., ia], Amq, optimize=True)
+            J_res[t0:t1, ia] = (
+                np.einsum("qst,qst->t", Ast.real, Z1.real, optimize=True)
+                + np.einsum("qst,qst->t", Ast.imag, Z1.imag, optimize=True)
+                - np.einsum("qst,qst->t", Amq.real, Z2.real, optimize=True)
+                - np.einsum("qst,qst->t", Amq.imag, Z2.imag, optimize=True)
+            ) / dtype_u(volume)
+            del Z1, Z2
+            Z1 = np.einsum("qsS,qSt->qst", Canti[..., ia], Amq, optimize=True)
+            Z2 = np.einsum("qsS,qSt->qst", Canti[..., ia], Ast, optimize=True)
+            J_anti[t0:t1, ia] = (
+                np.einsum("qst,qst->t", Ast.real, Z1.real, optimize=True)
+                + np.einsum("qst,qst->t", Ast.imag, Z1.imag, optimize=True)
+                - np.einsum("qst,qst->t", Amq.real, Z2.real, optimize=True)
+                - np.einsum("qst,qst->t", Amq.imag, Z2.imag, optimize=True)
+            ) / dtype_u(volume)
+            del Z1, Z2
+        del Ast, Amq
 
+    J_quasi_hm = J_res + J_anti
     return J_hm_q, J_quasi_hm
