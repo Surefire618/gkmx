@@ -8,6 +8,7 @@ import xarray as xr
 
 from ._log import Timer, talk, warn
 from .phonon import CONVENTIONS
+from .version import __version__
 
 xr.set_options(file_cache_maxsize=512)
 
@@ -222,6 +223,7 @@ def _cmd_gk(args):
     )
 
     t_write = Timer(f"Writing {outfile}", prefix=_CLI_PREFIX)
+    ds_gk.attrs["gkmx_version"] = __version__
     # h5netcdf + invalid_netcdf so complex v_qssa_cartesian round-trips
     # (netCDF4 engine rejects complex dtypes without auto_complex=True).
     ds_gk.to_netcdf(outfile, engine="h5netcdf", invalid_netcdf=True)

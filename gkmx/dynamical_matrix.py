@@ -16,6 +16,7 @@ from .lattice_points import (
 )
 from .phonon import CONVENTIONS, Phonon, Solution, SolutionWithGVM, _align_degenerate_branches
 from .precision import Precision
+from .version import __version__
 
 
 def _remap_force_constants(fc, primitive, supercell, new_supercell=None,
@@ -480,6 +481,7 @@ class DynamicalMatrix:
         ds.attrs["reference_supercell_json"] = atoms2json(self.supercell)
         ds.attrs["precision"] = self._precision
         ds.attrs["convention"] = self._convention
+        ds.attrs["gkmx_version"] = __version__
 
         ds[keys.q_points] = xr.DataArray(self.q_grid.points, dims=keys.q_a)
         ds[keys.fc_phonopy] = xr.DataArray(self._fc_phonopy, dims=keys.dim_fc_phonopy)
