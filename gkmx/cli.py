@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import xarray as xr
@@ -233,8 +234,9 @@ def _cmd_gk(args):
 def _build_parser():
     parser = argparse.ArgumentParser(
         prog="gkmx",
-        description="gkmx: mode-decomposed Green-Kubo thermal conductivity.",
+        description=f"gkmx {__version__}: mode-decomposed Green-Kubo thermal conductivity.",
     )
+    parser.add_argument("-V", "--version", action="version", version=f"gkmx {__version__}")
     top = parser.add_subparsers(dest="_group", required=True)
 
     out = top.add_parser("out", help="Output-writing commands (gk, ...).")
@@ -246,6 +248,10 @@ def _build_parser():
 
 def gkmx(argv=None):
     parser = _build_parser()
+    argv = sys.argv[1:] if argv is None else argv
+    if not argv:
+        parser.print_help()
+        return
     args = parser.parse_args(argv)
     args._command(args)
 
